@@ -320,7 +320,13 @@ import {
 } from '@/utils/providerProfiles'
 import useSettingForm from '@/utils/settingForm'
 import { settingPreset } from '@/utils/settingPreset'
-import { createTaskTools, FormatRequest, TaskToolName } from '@/utils/taskTools'
+import {
+  createTaskTools,
+  createTaskToolState,
+  FormatRequest,
+  isConfirmationIntent,
+  TaskToolName,
+} from '@/utils/taskTools'
 import { TextChangeProposal } from '@/utils/textProposal'
 
 const router = useRouter()
@@ -342,6 +348,11 @@ const selectedPromptId = ref<string>('')
 const customSystemPrompt = ref<string>('')
 
 const allGeneralToolNames: GeneralToolName[] = ['fetchWebContent', 'searchWeb', 'getCurrentDate', 'calculateMath']
+
+// Shared across agent turns and route changes: keeps text/format proposals alive
+// so a follow-up "是/确定" can apply the plan proposed in a previous message.
+const taskToolState = createTaskToolState()
+const lastAgentToolNames = ref<TaskToolName[]>([])
 
 function loadEnabledGeneralTools(): GeneralToolName[] {
   const stored = localStorage.getItem('enabledGeneralTools')
@@ -370,21 +381,51 @@ function getActiveTools(taskText = '') {
   const needsStructure = /全文|整篇|文档|章节|结构|大纲|document|section|outline|structure|review|审阅/i.test(
     normalized,
   )
+
+  // A bare confirmation reply ("是" / "确定" / "ok") carries no task keywords,
+  // so keep the write tools from the previous turn available for continuing.
+  const isConfirmation = isConfirmationIntent(taskText)
+  const hasPendingTextProposal = taskToolState.textProposals.size > 0
+  const hasPendingFormatRequest = taskToolState.formatRequests.size > 0
+
   const taskToolNames: TaskToolName[] = []
 
   if (needsStructure) taskToolNames.push('read_document_structure')
   if (needsRead || needsWrite || needsStructure) taskToolNames.push('read_range')
   if (needsTextEdit) taskToolNames.push('propose_document_patch', 'apply_document_patch', 'verify_patch')
-  if (needsFormat) taskToolNames.push('format_document_selection')
+  if (needsFormat) {
+    taskToolNames.push('propose_format_patch', 'apply_format_patch', 'format_document_selection')
+  }
 
-  const taskTools = createTaskTools(taskToolNames, {
-    requestTextChangeApproval: requestAgentTextChangeApproval,
-    requestFormatApproval,
-    requestSensitiveDataApproval,
-    onTextChangeApplied: change => {
-      lastAppliedChange.value = change
+  // Cross-turn continuation: a pending proposal or a confirmation reply keeps
+  // the corresponding apply tools loaded so the agent can finish the task.
+  if (isConfirmation || hasPendingFormatRequest) {
+    taskToolNames.push('propose_format_patch', 'apply_format_patch', 'read_range')
+  }
+  if (isConfirmation || hasPendingTextProposal) {
+    taskToolNames.push('apply_document_patch', 'verify_patch', 'read_range')
+  }
+  if (isConfirmation) {
+    for (const name of lastAgentToolNames.value) {
+      if (!taskToolNames.includes(name)) taskToolNames.push(name)
+    }
+  }
+
+  const deduped: TaskToolName[] = [...new Set(taskToolNames)]
+  lastAgentToolNames.value = deduped
+
+  const taskTools = createTaskTools(
+    deduped,
+    {
+      requestTextChangeApproval: requestAgentTextChangeApproval,
+      requestFormatApproval,
+      requestSensitiveDataApproval,
+      onTextChangeApplied: change => {
+        lastAppliedChange.value = change
+      },
     },
-  })
+    taskToolState,
+  )
   const generalTools = createGeneralTools(needsGeneral ? loadEnabledGeneralTools() : [], {
     requestExternalApproval: requestExternalNetworkApproval,
   })
@@ -728,10 +769,13 @@ You are a highly skilled Microsoft Word Expert Agent. Your goal is to assist use
 - You understand document structure, typography, and professional writing standards.
 
 # Guidelines
-1. **Tool First**: If a request requires document modification or inspection or web search and fetch, prioritize using the available tools.
-2. **Accuracy**: Ensure formatting and content changes are precise and follow the user's intent.
-3. **Conciseness**: Provide brief, helpful explanations of your actions.
-4. **Language**: You must communicate entirely in ${lang}.
+1. **Tool First**: If a request requires document modification or inspection or web search and fetch, you MUST use the available tools. Never claim the environment cannot write or format the document while tools are loaded — the tools are the write path.
+2. **Two-phase flow for anything the user wants to review**: call propose_document_patch or propose_format_patch first, show the returned plan to the user, and wait. When the user confirms in a later message (是 / 确定 / 执行 / apply / ok), call the matching apply_* tool with the exact proposalId/formatId returned earlier.
+3. **Never invent IDs**: use only the proposalId/formatId returned by a previous propose_* call.
+4. **Formatting units**: 字号 → fontSize in points (12 = 12号); 1.5 倍行距 → lineSpacingMultiple: 1.5; 段后间距 → spaceAfter in points; 两端对齐 → alignment: 'Justified'.
+5. **Accuracy**: Ensure formatting and content changes are precise and follow the user's intent. After applying, report the verification result.
+6. **Conciseness**: Provide brief, helpful explanations of your actions.
+7. **Language**: You must communicate entirely in ${lang}.
 
 # Safety
 Do not perform destructive actions (like clearing the whole document) unless explicitly instructed.
@@ -834,7 +878,7 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
       maxExternalRequests: 5,
       maxCostUsd: 1,
       estimatedCostPerModelCallUsd: 0.01,
-      writeToolNames: ['apply_document_patch', 'format_document_selection'],
+      writeToolNames: ['apply_document_patch', 'apply_format_patch', 'format_document_selection'],
       externalToolNames: ['fetchWebContent', 'searchWeb'],
       maxDurationMs: Math.max(120000, (provider === 'official' ? activeProfile.value?.timeoutMs || 60000 : 60000) * 3),
       messages: finalMessages,
