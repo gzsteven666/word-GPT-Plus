@@ -105,6 +105,7 @@ const props = defineProps<{
   cancelLabel: string
   addSelectedLabel: string
   resultSummary: string
+  preselectNew?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -130,7 +131,7 @@ watch(
   open => {
     if (!open) return
     query.value = ''
-    selected.value = props.models.filter(model => !props.existingModels.includes(model))
+    selected.value = props.preselectNew ? props.models.filter(model => !props.existingModels.includes(model)) : []
   },
 )
 

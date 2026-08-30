@@ -873,7 +873,7 @@ export function createWordTools(enabledTools?: WordToolName[]) {
       return tool(
         async input => {
           try {
-            return await def.execute(input)
+            return await def.execute(input as Record<string, any>)
           } catch (error: any) {
             return `Error: ${error.message || 'Unknown error occurred'}`
           }

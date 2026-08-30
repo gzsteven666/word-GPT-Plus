@@ -1,13 +1,14 @@
-import { Messages } from '@langchain/langgraph'
+import { BaseMessage } from '@langchain/core/messages'
 import { Ref } from 'vue'
 
 export interface BaseChatCompletionOptions {
-  messages: Messages
+  messages: BaseMessage[]
   result: Ref<string>
   errorIssue: Ref<boolean | string | null> // extends string for specific issues
   loading: Ref<boolean>
   maxTokens?: number
   temperature?: number
+  timeout?: number
   abortSignal?: AbortSignal
   threadId: string
   onStream: (text: string) => void
@@ -19,6 +20,7 @@ export interface OpenAIOptions extends BaseChatCompletionOptions {
   config: {
     apiKey: string
     baseURL?: string
+    headers?: Record<string, string>
     dangerouslyAllowBrowser?: boolean
   }
 }
@@ -65,6 +67,7 @@ export interface AgentOptions extends BaseChatCompletionOptions {
   config?: {
     apiKey: string
     baseURL?: string
+    headers?: Record<string, string>
     dangerouslyAllowBrowser?: boolean
   }
   ollamaModel?: string

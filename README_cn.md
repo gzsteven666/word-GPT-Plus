@@ -102,17 +102,38 @@ Word GPT Plus 是一款将 AI 和 Agent 无缝集成到 Microsoft Word 中的插
 
 选择最适合的安装方式：
 
-### 方式一：即刻使用
+### 方式一：即刻使用（Windows / macOS）
 
-*适合大多数用户，无需编写代码。*
+*适合大多数用户，无需构建源码。应用由 [GitHub Pages](https://gzsteven666.github.io/word-GPT-Plus/) 托管，后续版本会在重新打开加载项时自动更新。*
 
-可能会遇到CORS问题，无法解决时请使用自托管方式。
+#### Windows 一键安装
 
-1. 下载 `release/instant-use/manifest.xml` [manifest.xml](https://github.com/Kuingsmile/word-GPT-Plus/blob/master/release/instant-use/manifest.xml)。
-2. 将其保存到计算机上的专用文件夹中（例如：`C:\Users\username\Documents\WordGPT`）。
-3. 继续阅读下方的 [旁加载插件指南](#旁加载插件)。
+以管理员身份打开 PowerShell，运行：
 
-> **中国用户注意**：如果遇到连接问题，请尝试将 `msq.pub` 添加到您的代理规则，或使用自托管选项。
+```powershell
+$script = "$env:TEMP\install-word-gpt.ps1"
+Invoke-WebRequest https://raw.githubusercontent.com/gzsteven666/word-GPT-Plus/master/scripts/install-windows.ps1 -OutFile $script
+powershell -ExecutionPolicy Bypass -File $script
+```
+
+保存文档并重启 Word，然后选择 **插入 → 获取加载项 → 共享文件夹 → GPT Plus Steven**。
+
+#### macOS 一键安装
+
+先运行过一次 Microsoft Word，然后在“终端”执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gzsteven666/word-GPT-Plus/master/scripts/install-macos.sh -o /tmp/install-word-gpt.sh
+bash /tmp/install-word-gpt.sh
+```
+
+保存文档并彻底退出 Word，重新打开后选择 **主页 → 加载项 → GPT Plus Steven**。
+
+#### 手动安装
+
+下载个人版 [manifest.xml](https://github.com/gzsteven666/word-GPT-Plus/blob/master/release/instant-use/manifest.xml)，然后按照下方对应平台的[旁加载插件指南](#旁加载插件)操作。
+
+> OpenAI 兼容接口仍需允许来自 Office WebView 的跨域请求；遇到 CORS 限制时请使用支持浏览器访问的网关或自托管方式。
 
 ### 方式二：自托管（高级）
 
@@ -165,7 +186,9 @@ Word GPT Plus 是一款将 AI 和 Agent 无缝集成到 Microsoft Word 中的插
 
 为了开始使用 Word GPT Plus，你需要将插件旁加载到 Microsoft Word 中。
 
-你可以在下面的链接中找到微软提供的说明：[sideload office add-ins](https://learn.microsoft.com/en-us/office/dev/add-ins/testing/create-a-network-shared-folder-catalog-for-task-pane-and-content-add-ins)
+### Windows 手动旁加载
+
+微软官方说明：[通过网络共享旁加载 Office 加载项](https://learn.microsoft.com/office/dev/add-ins/testing/create-a-network-shared-folder-catalog-for-task-pane-and-content-add-ins)
 
 1. 打开你保存了 `manifest.xml` 文件的文件夹，例如 `C:\Users\username\Documents\WordGPT`.
 2. 右键点击文件夹打开菜单，选择 **属性**.
@@ -183,6 +206,17 @@ Word GPT Plus 是一款将 AI 和 Agent 无缝集成到 Microsoft Word 中的插
 11. 点击**插入** -> **获取加载项** -> **共享目录**，选择 **Word GPT**.
 12. 享受 Word GPT Plus 的强大功能吧！
 ![image](https://user-images.githubusercontent.com/96409857/234744280-9d9f13cf-536b-4fb5-adfa-cbec262d56a2.png)
+
+### macOS 手动旁加载
+
+微软官方说明：[在 Mac 上旁加载 Office 加载项](https://learn.microsoft.com/office/dev/add-ins/testing/sideload-an-office-add-in-on-mac)
+
+1. 在 Finder 按 `Command + Shift + G`。
+2. 输入 `~/Library/Containers/com.microsoft.Word/Data/Documents/wef`；目录不存在时手动创建。
+3. 将 `manifest.xml` 复制到 `wef` 目录。
+4. 保存文档并彻底退出 Word，然后重新打开一个 `.docx` 文档。
+5. 选择 **主页 → 加载项 → GPT Plus Steven**。
+6. 若旧版本缓存没有刷新，可运行 `npx office-addin-cache clear` 后重启 Word。
 
 ## 📖 使用方法
 

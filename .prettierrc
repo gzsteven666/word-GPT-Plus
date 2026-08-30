@@ -2,6 +2,7 @@
   "arrowParens": "avoid",
   "bracketSpacing": true,
   "htmlWhitespaceSensitivity": "css",
+  "endOfLine": "auto",
   "insertPragma": false,
   "jsxBracketSameLine": false,
   "jsxSingleQuote": true,
@@ -14,6 +15,6 @@
   "tabWidth": 2,
   "trailingComma": "all",
   "useTabs": false,
-   "plugins": ["prettier-plugin-tailwindcss"],
+  "plugins": ["prettier-plugin-tailwindcss"],
   "tailwindStylesheet": "./src/index.css"
 }

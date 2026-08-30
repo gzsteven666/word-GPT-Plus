@@ -124,7 +124,9 @@
               v-show="settingForm.api === platform"
               :key="platform"
             >
-              <SettingCard v-for="item in getApiInputSettings(platform)" :key="item">
+              <ProviderProfilesPanel v-if="platform === 'official'" />
+
+              <SettingCard v-for="item in platform === 'official' ? [] : getApiInputSettings(platform)" :key="item">
                 <CustomInput
                   v-model="settingForm[item as SettingNames]"
                   :title="t(getLabel(item))"
@@ -132,7 +134,7 @@
                 />
               </SettingCard>
 
-              <SettingCard v-if="hasCustomModelsSupport(platform)" p1>
+              <SettingCard v-if="platform !== 'official' && hasCustomModelsSupport(platform)" p1>
                 <div class="flex flex-col items-start gap-2 p-3">
                   <CustomInput
                     v-model="newCustomModel[platform]"
@@ -184,7 +186,7 @@
                   </div>
                 </div>
               </SettingCard>
-              <SettingCard v-for="item in getApiSelectSettings(platform)" :key="item">
+              <SettingCard v-for="item in platform === 'official' ? [] : getApiSelectSettings(platform)" :key="item">
                 <SingleSelect
                   v-model="settingForm[item as SettingNames]"
                   :key-list="getMergedModelOptions(platform)"
@@ -193,14 +195,14 @@
                   :placeholder="settingForm[item as SettingNames]"
                 />
               </SettingCard>
-              <SettingCard v-for="item in getApiNumSettings(platform)" :key="item">
+              <SettingCard v-for="item in platform === 'official' ? [] : getApiNumSettings(platform)" :key="item">
                 <CustomInput
                   v-model.number="settingForm[item as SettingNames]"
                   :title="t(getLabel(item))"
-                  :placeholder="t(getPlaceholder(item))"
+                  :placeholder="item.includes('MaxTokens') ? t('zeroMeansAuto') : t(getPlaceholder(item))"
                   type="number"
                   :min="0"
-                  :max="item.includes('Temperature') ? 2 : 32000"
+                  :max="item.includes('Temperature') ? 2 : 131072"
                   :step="item.includes('Temperature') ? 0.1 : 1"
                 />
               </SettingCard>
@@ -485,6 +487,7 @@ import { fetchModelCatalog, ModelCatalogProvider } from '@/api/modelCatalog'
 import CustomButton from '@/components/CustomButton.vue'
 import CustomInput from '@/components/CustomInput.vue'
 import ModelPickerDialog from '@/components/ModelPickerDialog.vue'
+import ProviderProfilesPanel from '@/components/ProviderProfilesPanel.vue'
 import SettingCard from '@/components/SettingCard.vue'
 import SettingSection from '@/components/SettingSection.vue'
 import SingleSelect from '@/components/SingleSelect.vue'

@@ -17,7 +17,8 @@ const fetchWebContentTool = new DynamicStructuredTool({
   schema: z.object({
     url: z.string().describe('The URL to fetch content from'),
   }),
-  func: async ({ url }) => {
+  func: async (input: unknown) => {
+    const { url } = input as { url: string }
     try {
       const response = await fetch(url, {
         headers: {
@@ -56,7 +57,8 @@ const searchWebTool = new DynamicStructuredTool({
     query: z.string().describe('The search query'),
     maxResults: z.number().optional().default(10).describe('Maximum number of results to return (default: 10)'),
   }),
-  func: async ({ query, maxResults = 10 }) => {
+  func: async (input: unknown) => {
+    const { query, maxResults = 10 } = input as { query: string; maxResults?: number }
     try {
       const url = `https://ddgs.horosama.com/search/text?query=${encodeURIComponent(query)}&max_results=${maxResults <= 10 ? maxResults : 10}`
       const response = await fetch(url)
@@ -86,7 +88,8 @@ const getCurrentDateTool = new DynamicStructuredTool({
       .default('full')
       .describe('Format: "full" (date and time), "date" (date only), "time" (time only), "iso" (ISO 8601)'),
   }),
-  func: async ({ format = 'full' }) => {
+  func: async (input: unknown) => {
+    const { format = 'full' } = input as { format?: 'full' | 'date' | 'time' | 'iso' }
     const now = new Date()
 
     switch (format) {
@@ -125,7 +128,8 @@ const calculateMathTool = new DynamicStructuredTool({
   schema: z.object({
     expression: z.string().describe('The mathematical expression to evaluate (e.g., "2 + 2 * 3")'),
   }),
-  func: async ({ expression }) => {
+  func: async (input: unknown) => {
+    const { expression } = input as { expression: string }
     try {
       const result = evaluate(expression)
 

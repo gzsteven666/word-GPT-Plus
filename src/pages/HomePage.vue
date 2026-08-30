@@ -169,7 +169,8 @@
             <button
               class="cursor-po flex h-7 w-7 items-center justify-center rounded-md border-none text-secondary hover:bg-accent/30 hover:text-white! [.active]:text-accent"
               :class="{ active: mode === 'agent' }"
-              title="Agent Mode"
+              :title="agentCapabilityBlocked ? $t('modelDoesNotSupportTools') : 'Agent Mode'"
+              :disabled="agentCapabilityBlocked"
               @click="mode = 'agent'"
             >
               <BotMessageSquare :size="17" />
@@ -177,11 +178,11 @@
           </div>
           <div class="flex min-w-0 flex-1 gap-1 overflow-hidden">
             <select
-              v-model="settingForm.api"
+              v-model="currentProviderSelection"
               class="h-7 max-w-full min-w-0 cursor-pointer rounded-md border border-border bg-surface p-1 text-xs text-secondary hover:border-accent focus:outline-none disabled:cursor-not-allowed disabled:bg-secondary"
             >
-              <option v-for="item in settingPreset.api.optionObj" :key="item.value" :value="item.value">
-                {{ item.label.replace('official', 'OpenAI') }}
+              <option v-for="item in providerSelectionOptions" :key="item.value" :value="item.value">
+                {{ item.label }}
               </option>
             </select>
             <select
@@ -276,6 +277,12 @@ import { buildInPrompt, getBuiltInPrompt } from '@/utils/constant'
 import { localStorageKey } from '@/utils/enum'
 import { createGeneralTools, GeneralToolName } from '@/utils/generalTools'
 import { message as messageUtil } from '@/utils/message'
+import {
+  createProviderModel,
+  getResolvedCapability,
+  resolveMaxTokens,
+  useProviderProfiles,
+} from '@/utils/providerProfiles'
 import useSettingForm from '@/utils/settingForm'
 import { settingPreset } from '@/utils/settingPreset'
 import { createWordTools, WordToolName } from '@/utils/wordTools'
@@ -284,6 +291,7 @@ const router = useRouter()
 const { t } = useI18n()
 
 const settingForm = useSettingForm()
+const { profiles, activeProfileId, activeProfile, setActiveProfile, updateProfile } = useProviderProfiles()
 
 interface SavedPrompt {
   id: string
@@ -443,15 +451,32 @@ const getCustomModels = (key: string, oldKey: string): string[] => {
   return []
 }
 
+const providerSelectionOptions = computed(() => [
+  ...profiles.value.map(profile => ({ value: `profile:${profile.id}`, label: profile.name })),
+  ...settingPreset.api.optionObj
+    .filter(item => item.value !== 'official')
+    .map(item => ({ value: item.value, label: item.label })),
+])
+
+const currentProviderSelection = computed({
+  get: () => (settingForm.value.api === 'official' ? `profile:${activeProfileId.value}` : settingForm.value.api),
+  set: (value: string) => {
+    if (value.startsWith('profile:')) {
+      setActiveProfile(value.slice('profile:'.length))
+      settingForm.value.api = 'official'
+      return
+    }
+    settingForm.value.api = value as typeof settingForm.value.api
+  },
+})
+
 const currentModelOptions = computed(() => {
   let presetOptions: string[] = []
   let customModels: string[] = []
 
   switch (settingForm.value.api) {
     case 'official':
-      presetOptions = settingPreset.officialModelSelect.optionList || []
-      customModels = getCustomModels('customModels', 'customModel')
-      break
+      return activeProfile.value?.models.filter(model => model.enabled).map(model => model.id) || []
     case 'gemini':
       presetOptions = settingPreset.geminiModelSelect.optionList || []
       customModels = getCustomModels('geminiCustomModels', 'geminiCustomModel')
@@ -477,7 +502,7 @@ const currentModelSelect = computed({
   get() {
     switch (settingForm.value.api) {
       case 'official':
-        return settingForm.value.officialModelSelect
+        return activeProfile.value?.defaultModel || ''
       case 'gemini':
         return settingForm.value.geminiModelSelect
       case 'ollama':
@@ -493,8 +518,9 @@ const currentModelSelect = computed({
   set(value) {
     switch (settingForm.value.api) {
       case 'official':
-        settingForm.value.officialModelSelect = value
-        localStorage.setItem(localStorageKey.model, value)
+        if (activeProfile.value) {
+          updateProfile({ ...activeProfile.value, defaultModel: value })
+        }
         break
       case 'gemini':
         settingForm.value.geminiModelSelect = value
@@ -514,6 +540,24 @@ const currentModelSelect = computed({
         break
     }
   },
+})
+
+const activeModelProfile = computed(() => {
+  if (settingForm.value.api === 'official') {
+    return activeProfile.value?.models.find(model => model.id === currentModelSelect.value)
+  }
+  return createProviderModel(currentModelSelect.value)
+})
+
+const agentCapabilityBlocked = computed(
+  () => !!activeModelProfile.value && getResolvedCapability(activeModelProfile.value, 'tools') === 'no',
+)
+const activeModelIsReasoning = computed(
+  () => !!activeModelProfile.value && getResolvedCapability(activeModelProfile.value, 'reasoning') === 'yes',
+)
+
+watch(agentCapabilityBlocked, blocked => {
+  if (blocked && mode.value === 'agent') mode.value = 'ask'
 })
 
 function settings() {
@@ -678,6 +722,11 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
 
   const isAgentMode = mode.value === 'agent'
 
+  if (isAgentMode && agentCapabilityBlocked.value) {
+    messageUtil.error(t('modelDoesNotSupportTools'))
+    return
+  }
+
   const finalSystemMessage =
     customSystemPrompt.value || systemMessage || (isAgentMode ? agentPrompt(lang) : standardPrompt(lang))
 
@@ -693,20 +742,26 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
     official: {
       provider: 'official',
       config: {
-        apiKey: settings.officialAPIKey,
-        baseURL: settings.officialBasePath,
+        apiKey: activeProfile.value?.apiKey || '',
+        baseURL: activeProfile.value?.baseURL,
+        headers: Object.fromEntries(
+          (activeProfile.value?.headers || [])
+            .filter(header => header.key.trim())
+            .map(header => [header.key.trim(), header.value]),
+        ),
         dangerouslyAllowBrowser: true,
       },
-      maxTokens: settings.officialMaxTokens,
-      temperature: settings.officialTemperature,
-      model: settings.officialModelSelect,
+      maxTokens: resolveMaxTokens(activeProfile.value?.maxTokens || 0, activeModelProfile.value, isAgentMode),
+      temperature: activeModelIsReasoning.value ? undefined : (activeProfile.value?.temperature ?? 0.7),
+      timeout: activeProfile.value?.timeoutMs || 60000,
+      model: activeProfile.value?.defaultModel || '',
     },
     groq: {
       provider: 'groq',
       groqAPIKey: settings.groqAPIKey,
       groqModel: settings.groqModelSelect,
-      maxTokens: settings.groqMaxTokens,
-      temperature: settings.groqTemperature,
+      maxTokens: resolveMaxTokens(settings.groqMaxTokens, activeModelProfile.value, isAgentMode),
+      temperature: activeModelIsReasoning.value ? undefined : settings.groqTemperature,
     },
     azure: {
       provider: 'azure',
@@ -714,21 +769,21 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
       azureAPIEndpoint: settings.azureAPIEndpoint,
       azureDeploymentName: settings.azureDeploymentName,
       azureAPIVersion: settings.azureAPIVersion,
-      maxTokens: settings.azureMaxTokens,
-      temperature: settings.azureTemperature,
+      maxTokens: resolveMaxTokens(settings.azureMaxTokens, activeModelProfile.value, isAgentMode),
+      temperature: activeModelIsReasoning.value ? undefined : settings.azureTemperature,
     },
     gemini: {
       provider: 'gemini',
       geminiAPIKey: settings.geminiAPIKey,
-      maxTokens: settings.geminiMaxTokens,
-      temperature: settings.geminiTemperature,
+      maxTokens: resolveMaxTokens(settings.geminiMaxTokens, activeModelProfile.value, isAgentMode),
+      temperature: activeModelIsReasoning.value ? undefined : settings.geminiTemperature,
       geminiModel: settings.geminiModelSelect,
     },
     ollama: {
       provider: 'ollama',
       ollamaEndpoint: settings.ollamaEndpoint,
       ollamaModel: settings.ollamaModelSelect,
-      temperature: settings.ollamaTemperature,
+      temperature: activeModelIsReasoning.value ? undefined : settings.ollamaTemperature,
     },
   }
 
@@ -746,7 +801,8 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
 
     await getAgentResponse({
       ...currentConfig,
-      recursionLimit: settings.agentMaxIterations,
+      recursionLimit:
+        provider === 'official' ? activeProfile.value?.agentMaxIterations || 25 : settings.agentMaxIterations,
       messages: finalMessages,
       tools,
       errorIssue,
@@ -823,9 +879,21 @@ function copyToClipboard(text: string) {
 }
 
 function checkApiKey() {
+  if (settingForm.value.api === 'official') {
+    if (!activeProfile.value?.apiKey) {
+      messageUtil.error(t('noAPIKey'))
+      return false
+    }
+    if (!activeProfile.value.defaultModel) {
+      messageUtil.error(t('noModelSelected'))
+      return false
+    }
+    return true
+  }
+
   const auth = {
     type: settingForm.value.api as supportedPlatforms,
-    apiKey: settingForm.value.officialAPIKey,
+    apiKey: '',
     azureAPIKey: settingForm.value.azureAPIKey,
     geminiAPIKey: settingForm.value.geminiAPIKey,
     groqAPIKey: settingForm.value.groqAPIKey,

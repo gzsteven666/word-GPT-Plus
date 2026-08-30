@@ -5,7 +5,18 @@ export interface FetchModelCatalogOptions {
   apiKey?: string
   baseURL?: string
   ollamaEndpoint?: string
+  headers?: Record<string, string>
   signal?: AbortSignal
+}
+
+export class ModelCatalogError extends Error {
+  status?: number
+
+  constructor(message: string, status?: number) {
+    super(message)
+    this.name = 'ModelCatalogError'
+    this.status = status
+  }
 }
 
 const DEFAULT_ENDPOINTS = {
@@ -28,7 +39,7 @@ const getErrorMessage = async (response: Response): Promise<string> => {
 const requestJson = async (url: string, init: RequestInit = {}) => {
   const response = await fetch(url, init)
   if (!response.ok) {
-    throw new Error(await getErrorMessage(response))
+    throw new ModelCatalogError(await getErrorMessage(response), response.status)
   }
   return response.json()
 }
@@ -42,10 +53,11 @@ const requireApiKey = (apiKey: string | undefined) => {
 const fetchOpenAICompatibleModels = async (
   baseURL: string,
   apiKey: string,
+  headers: Record<string, string> = {},
   signal?: AbortSignal,
 ): Promise<string[]> => {
   const data = await requestJson(`${trimTrailingSlash(baseURL)}/models`, {
-    headers: { Authorization: `Bearer ${apiKey}` },
+    headers: { Authorization: `Bearer ${apiKey}`, ...headers },
     signal,
   })
 
@@ -95,11 +107,17 @@ export const fetchModelCatalog = async (options: FetchModelCatalogOptions): Prom
       models = await fetchOpenAICompatibleModels(
         options.baseURL?.trim() || DEFAULT_ENDPOINTS.official,
         requireApiKey(options.apiKey),
+        options.headers,
         options.signal,
       )
       break
     case 'groq':
-      models = await fetchOpenAICompatibleModels(DEFAULT_ENDPOINTS.groq, requireApiKey(options.apiKey), options.signal)
+      models = await fetchOpenAICompatibleModels(
+        DEFAULT_ENDPOINTS.groq,
+        requireApiKey(options.apiKey),
+        options.headers,
+        options.signal,
+      )
       break
     case 'gemini':
       models = await fetchGeminiModels(requireApiKey(options.apiKey), options.signal)

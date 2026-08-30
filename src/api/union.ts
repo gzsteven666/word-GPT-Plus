@@ -26,9 +26,11 @@ const ModelCreators: Record<string, (opts: any) => BaseChatModel> = {
       configuration: {
         apiKey: opts.config.apiKey,
         baseURL: opts.config.baseURL || 'https://api.openai.com/v1',
+        defaultHeaders: opts.config.headers,
       },
-      temperature: opts.temperature ?? 0.7,
-      maxTokens: opts.maxTokens ?? 800,
+      temperature: opts.temperature,
+      maxTokens: opts.maxTokens ?? 4096,
+      timeout: opts.timeout,
     })
   },
 
@@ -44,8 +46,9 @@ const ModelCreators: Record<string, (opts: any) => BaseChatModel> = {
     return new ChatGroq({
       model: opts.groqModel,
       apiKey: opts.groqAPIKey,
-      temperature: opts.temperature ?? 0.5,
-      maxTokens: opts.maxTokens ?? 1024,
+      temperature: opts.temperature,
+      maxTokens: opts.maxTokens ?? 4096,
+      timeout: opts.timeout,
     })
   },
 
@@ -53,16 +56,17 @@ const ModelCreators: Record<string, (opts: any) => BaseChatModel> = {
     return new ChatGoogleGenerativeAI({
       model: opts.geminiModel ?? 'gemini-3-pro-preview',
       apiKey: opts.geminiAPIKey,
-      temperature: opts.temperature ?? 0.7,
-      maxOutputTokens: opts.maxTokens ?? 800,
+      temperature: opts.temperature,
+      maxOutputTokens: opts.maxTokens ?? 4096,
     })
   },
 
   azure: (opts: AzureOptions) => {
     return new AzureChatOpenAI({
       model: opts.azureDeploymentName,
-      temperature: opts.temperature ?? 0.7,
-      maxTokens: opts.maxTokens ?? 800,
+      temperature: opts.temperature,
+      maxTokens: opts.maxTokens ?? 4096,
+      timeout: opts.timeout,
       azureOpenAIApiKey: opts.azureAPIKey,
       azureOpenAIEndpoint: opts.azureAPIEndpoint,
       azureOpenAIApiDeploymentName: opts.azureDeploymentName,
@@ -76,33 +80,21 @@ const checkpointer = new IndexedDBSaver()
 
 async function executeChatFlow(model: BaseChatModel, options: ProviderOptions): Promise<void> {
   try {
-    if (!options.threadId) {
-      options.threadId = crypto.randomUUID()
-      console.log(`[Chat] New thread started: ${options.threadId}`)
-    }
-    const agent = createAgent({
-      model,
-      tools: [],
-      checkpointer,
-    })
-    const stream = await agent.stream(
-      {
-        messages: options.messages,
-      },
-      {
-        signal: options.abortSignal,
-        configurable: { thread_id: options.threadId },
-        streamMode: 'messages',
-      },
-    )
+    const stream = await model.stream(options.messages, { signal: options.abortSignal })
 
     let fullContent = ''
     for await (const chunk of stream) {
-      if (options.abortSignal?.aborted) {
-        break
-      }
+      if (options.abortSignal?.aborted) break
 
-      const content = typeof chunk[0].content === 'string' ? chunk[0].content : ''
+      const content = Array.isArray(chunk.content)
+        ? chunk.content
+            .map(part =>
+              typeof part === 'string' ? part : 'text' in part && typeof part.text === 'string' ? part.text : '',
+            )
+            .join('')
+        : typeof chunk.content === 'string'
+          ? chunk.content
+          : ''
       fullContent += content
       options.onStream(fullContent)
     }
@@ -147,6 +139,8 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
 
     let fullContent = ''
     let stepCount = 0
+    let lastToolSignature = ''
+    let repeatedToolCalls = 0
 
     for await (const step of stream) {
       if (options.abortSignal?.aborted) {
@@ -173,13 +167,15 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
       if (msg._getType?.() === 'ai' && msg.tool_calls?.length > 0) {
         console.log('[Agent] Tool calls detected:', msg.tool_calls.length)
         for (const toolCall of msg.tool_calls) {
-          console.log('[Agent] Tool call:', {
-            name: toolCall.name,
-            args: toolCall.args,
-          })
-          if (options.onToolCall) {
-            options.onToolCall(toolCall.name, toolCall.args)
+          const signature = `${toolCall.name}:${JSON.stringify(toolCall.args || {})}`
+          repeatedToolCalls = signature === lastToolSignature ? repeatedToolCalls + 1 : 1
+          lastToolSignature = signature
+          if (repeatedToolCalls >= 3) {
+            const loopError = new Error('Repeated identical tool call detected')
+            loopError.name = 'AgentLoopError'
+            throw loopError
           }
+          if (options.onToolCall) options.onToolCall(toolCall.name, toolCall.args)
         }
       }
 
@@ -190,7 +186,6 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
         console.log('[Agent] Tool result:', {
           name: toolName,
           contentLength: toolContent.length,
-          contentPreview: toolContent.substring(0, 100),
         })
         if (options.onToolResult) {
           options.onToolResult(toolName, toolContent)
@@ -202,9 +197,6 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
         const content = typeof msg.content === 'string' ? msg.content : ''
         if (content && (!msg.tool_calls || msg.tool_calls.length === 0)) {
           fullContent = content
-          console.log('[Agent] AI response:', {
-            content,
-          })
           options.onStream(fullContent)
         }
       }
@@ -218,8 +210,12 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
     }
     if (error.name === 'GraphRecursionError') {
       options.errorIssue.value = 'recursionLimitExceeded'
+    } else if (error.name === 'AgentLoopError') {
+      options.errorIssue.value = 'agentRepeatedToolCalls'
+    } else {
+      options.errorIssue.value = true
     }
-    // TODO: more specific error handling based on LangGraph error
+    // TODO: more specific error handling based on provider error
     console.error(error)
   } finally {
     options.loading.value = false
