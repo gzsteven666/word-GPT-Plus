@@ -150,6 +150,20 @@
                       />
                     </template>
                   </CustomInput>
+                  <div class="flex w-full items-center gap-2">
+                    <CustomButton
+                      :icon="isFetchingModels[platform] ? LoaderCircle : Download"
+                      :icon-class="isFetchingModels[platform] ? 'animate-spin' : ''"
+                      :text="t('fetchModels')"
+                      type="secondary"
+                      class="flex-1"
+                      :disabled="isFetchingModels[platform]"
+                      @click="fetchAvailableModels(platform)"
+                    />
+                  </div>
+                  <p v-if="modelFetchError[platform]" class="text-xs text-danger">
+                    {{ modelFetchError[platform] }}
+                  </p>
                   <div
                     v-if="customModelsMap[platform] && customModelsMap[platform].length > 0"
                     class="flex flex-wrap gap-1.5"
@@ -423,6 +437,26 @@
         </div>
       </div>
     </div>
+
+    <ModelPickerDialog
+      :open="modelPickerOpen"
+      :models="catalogModels"
+      :existing-models="modelPickerPlatform ? getMergedModelOptions(modelPickerPlatform) : []"
+      :title="t('modelPickerTitle')"
+      :subtitle="t('modelPickerSubtitle', { provider: getProviderDisplayName(modelPickerPlatform) })"
+      :search-placeholder="t('searchModels')"
+      :close-label="t('cancel')"
+      :select-visible-label="t('selectVisible')"
+      :clear-visible-label="t('clearVisible')"
+      :added-label="t('alreadyAdded')"
+      :empty-label="t('noModelsFound')"
+      :selected-label="t('modelsSelected')"
+      :cancel-label="t('cancel')"
+      :add-selected-label="t('addSelectedModels')"
+      :result-summary="t('modelsFound', { count: catalogModels.length })"
+      @close="modelPickerOpen = false"
+      @confirm="addFetchedModels"
+    />
   </div>
 </template>
 
@@ -430,8 +464,10 @@
 import {
   ArrowLeft,
   Cpu,
+  Download,
   Edit2,
   Globe,
+  LoaderCircle,
   MessageSquare,
   Plus,
   RotateCcwIcon,
@@ -445,8 +481,10 @@ import { onBeforeMount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
+import { fetchModelCatalog, ModelCatalogProvider } from '@/api/modelCatalog'
 import CustomButton from '@/components/CustomButton.vue'
 import CustomInput from '@/components/CustomInput.vue'
+import ModelPickerDialog from '@/components/ModelPickerDialog.vue'
 import SettingCard from '@/components/SettingCard.vue'
 import SettingSection from '@/components/SettingSection.vue'
 import SingleSelect from '@/components/SingleSelect.vue'
@@ -467,6 +505,11 @@ const wordToolsList = [...getGeneralToolDefinitions(), ...getWordToolDefinitions
 
 const newCustomModel = ref<Record<string, string>>({})
 const customModelsMap = ref<Record<string, string[]>>({})
+const isFetchingModels = ref<Record<string, boolean>>({})
+const modelFetchError = ref<Record<string, string>>({})
+const modelPickerOpen = ref(false)
+const modelPickerPlatform = ref('')
+const catalogModels = ref<string[]>([])
 
 // Prompt management
 interface Prompt {
@@ -623,6 +666,76 @@ const getMergedModelOptions = (platform: string) => {
 
 const hasCustomModelsSupport = (platform: string) => {
   return getCustomModelsKey(platform) !== null
+}
+
+const getProviderDisplayName = (platform: string) => {
+  if (platform === 'official') return 'OpenAI / OpenAI-compatible'
+  return platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : ''
+}
+
+const getCatalogOptions = (platform: ModelCatalogProvider) => {
+  switch (platform) {
+    case 'official':
+      return {
+        provider: platform,
+        apiKey: settingForm.value.officialAPIKey,
+        baseURL: settingForm.value.officialBasePath,
+      }
+    case 'gemini':
+      return { provider: platform, apiKey: settingForm.value.geminiAPIKey }
+    case 'groq':
+      return { provider: platform, apiKey: settingForm.value.groqAPIKey }
+    case 'ollama':
+      return { provider: platform, ollamaEndpoint: settingForm.value.ollamaEndpoint }
+  }
+}
+
+const getModelFetchError = (error: unknown) => {
+  if (!(error instanceof Error)) return t('modelFetchFailed')
+  if (error.name === 'AbortError') return t('modelFetchTimeout')
+  if (error.message === 'API_KEY_REQUIRED') return t('modelFetchApiKeyRequired')
+  if (error.message === 'INVALID_MODEL_RESPONSE') return t('modelFetchInvalidResponse')
+  return `${t('modelFetchFailed')}: ${error.message}`
+}
+
+const fetchAvailableModels = async (platform: string) => {
+  if (!['official', 'gemini', 'ollama', 'groq'].includes(platform)) return
+
+  modelFetchError.value[platform] = ''
+  isFetchingModels.value[platform] = true
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 20000)
+
+  try {
+    const models = await fetchModelCatalog({
+      ...getCatalogOptions(platform as ModelCatalogProvider),
+      signal: controller.signal,
+    })
+    if (models.length === 0) {
+      modelFetchError.value[platform] = t('noModelsReturned')
+      return
+    }
+    catalogModels.value = models
+    modelPickerPlatform.value = platform
+    modelPickerOpen.value = true
+  } catch (error) {
+    modelFetchError.value[platform] = getModelFetchError(error)
+  } finally {
+    window.clearTimeout(timeout)
+    isFetchingModels.value[platform] = false
+  }
+}
+
+const addFetchedModels = (models: string[]) => {
+  const platform = modelPickerPlatform.value
+  const key = getCustomModelsKey(platform)
+  if (!key) return
+
+  const existingOptions = new Set(getMergedModelOptions(platform))
+  const modelsToAdd = models.filter(model => !existingOptions.has(model))
+  customModelsMap.value[platform] = [...(customModelsMap.value[platform] || []), ...modelsToAdd]
+  ;(settingPreset[key] as any).saveFunc(customModelsMap.value[platform])
+  modelPickerOpen.value = false
 }
 
 const addWatch = () => {
