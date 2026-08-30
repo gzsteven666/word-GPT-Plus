@@ -203,6 +203,8 @@ const activeProfileId = ref(
 
 const persistProfiles = () => localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles.value))
 
+export const cloneProviderProfile = (profile: ProviderProfile): ProviderProfile => JSON.parse(JSON.stringify(profile))
+
 export const useProviderProfiles = () => {
   const activeProfile = computed(() => profiles.value.find(profile => profile.id === activeProfileId.value) || null)
 
@@ -223,7 +225,7 @@ export const useProviderProfiles = () => {
   const updateProfile = (profile: ProviderProfile) => {
     const index = profiles.value.findIndex(item => item.id === profile.id)
     if (index === -1) return
-    profiles.value[index] = normalizeProfile(structuredClone(profile))
+    profiles.value[index] = normalizeProfile(cloneProviderProfile(profile))
     persistProfiles()
   }
 

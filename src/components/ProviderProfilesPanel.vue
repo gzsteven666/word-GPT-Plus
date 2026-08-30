@@ -261,6 +261,7 @@ import CustomInput from '@/components/CustomInput.vue'
 import ModelPickerDialog from '@/components/ModelPickerDialog.vue'
 import SettingCard from '@/components/SettingCard.vue'
 import {
+  cloneProviderProfile,
   createProviderModel,
   cycleCapabilityOverride,
   getResolvedCapability,
@@ -276,7 +277,7 @@ const { profiles, activeProfileId, activeProfile, setActiveProfile, addProfile, 
   useProviderProfiles()
 
 const selectedTemplate = ref('openai')
-const draft = ref<ProviderProfile | null>(activeProfile.value ? structuredClone(activeProfile.value) : null)
+const draft = ref<ProviderProfile | null>(activeProfile.value ? cloneProviderProfile(activeProfile.value) : null)
 const savedSnapshot = ref(draft.value ? JSON.stringify(draft.value) : '')
 const testing = ref(false)
 const fetching = ref(false)
@@ -301,7 +302,7 @@ const modelsEndpoint = computed(() => `${draft.value?.baseURL?.replace(/\/+$/, '
 watch(
   activeProfile,
   profile => {
-    draft.value = profile ? structuredClone(profile) : null
+    draft.value = profile ? cloneProviderProfile(profile) : null
     savedSnapshot.value = draft.value ? JSON.stringify(draft.value) : ''
     connectionMessage.value = ''
   },
@@ -391,7 +392,7 @@ const saveProfile = () => {
 }
 
 const resetDraft = () => {
-  draft.value = activeProfile.value ? structuredClone(activeProfile.value) : null
+  draft.value = activeProfile.value ? cloneProviderProfile(activeProfile.value) : null
   savedSnapshot.value = draft.value ? JSON.stringify(draft.value) : ''
   connectionMessage.value = ''
 }

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 
+import { reactive } from 'vue'
+
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
 
@@ -35,6 +37,7 @@ localStorage.setItem('model', 'gpt-5')
 localStorage.setItem('maxTokens', '800')
 
 const {
+  cloneProviderProfile,
   createProviderModel,
   cycleCapabilityOverride,
   getResolvedCapability,
@@ -72,5 +75,11 @@ assert.equal(activeProfile.value?.apiKey, 'legacy-key')
 assert.equal(activeProfile.value?.baseURL, 'https://api.example.com/v1')
 assert.equal(activeProfile.value?.defaultModel, 'gpt-5')
 assert.equal(activeProfile.value?.maxTokens, 0)
+
+const reactiveProfile = reactive(activeProfile.value!)
+const clonedProfile = cloneProviderProfile(reactiveProfile)
+assert.notEqual(clonedProfile, reactiveProfile)
+assert.equal(clonedProfile.apiKey, 'legacy-key')
+assert.deepEqual(clonedProfile.models, reactiveProfile.models)
 
 console.log('providerProfiles tests: PASS')
