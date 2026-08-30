@@ -193,7 +193,7 @@ export const createTaskTools = (enabledTools?: TaskToolName[], security?: TaskTo
             fontSize?: number
             fontColor?: string
             highlightColor?: string
-            alignment?: 'Left' | 'Center' | 'Right' | 'Justify'
+            alignment?: 'Left' | 'Centered' | 'Right' | 'Justified'
             lineSpacing?: number
             spaceAfter?: number
           }
@@ -287,7 +287,7 @@ export const createTaskTools = (enabledTools?: TaskToolName[], security?: TaskTo
               .regex(/^#[0-9A-Fa-f]{6}$/)
               .optional(),
             highlightColor: z.string().optional(),
-            alignment: z.enum(['Left', 'Center', 'Right', 'Justify']).optional(),
+            alignment: z.enum(['Left', 'Centered', 'Right', 'Justified']).optional(),
             lineSpacing: z.number().positive().max(10).optional(),
             spaceAfter: z.number().min(0).max(200).optional(),
           }),
