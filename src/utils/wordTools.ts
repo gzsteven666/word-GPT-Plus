@@ -1,6 +1,15 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 
+import { AppError } from '@/api/errors'
+import {
+  AppliedTextChange,
+  applyTextChangeProposal,
+  makeSelectionProposal,
+  readSelectionSnapshot,
+} from '@/api/safeEdit'
+import { createTextChangeProposal, TextChangeProposal } from '@/utils/textProposal'
+
 export type WordToolName =
   | 'getSelectedText'
   | 'getDocumentContent'
@@ -833,7 +842,14 @@ const wordToolDefinitions: Record<WordToolName, WordToolDefinition> = {
   },
 }
 
-export function createWordTools(enabledTools?: WordToolName[]) {
+export interface WordToolSecurityOptions {
+  requestTextChangeApproval?: (proposal: TextChangeProposal) => Promise<boolean>
+  onTextChangeApplied?: (change: AppliedTextChange) => void
+}
+
+const textWriteTools = new Set<WordToolName>(['insertText', 'replaceSelectedText', 'deleteText'])
+
+export function createWordTools(enabledTools?: WordToolName[], security?: WordToolSecurityOptions) {
   const tools = Object.entries(wordToolDefinitions)
     .filter(([name]) => !enabledTools || enabledTools.includes(name as WordToolName))
     .map(([, def]) => {
@@ -873,7 +889,37 @@ export function createWordTools(enabledTools?: WordToolName[]) {
       return tool(
         async input => {
           try {
-            return await def.execute(input as Record<string, any>)
+            const args = input as Record<string, any>
+            if (security?.requestTextChangeApproval && textWriteTools.has(def.name as WordToolName)) {
+              let proposal: TextChangeProposal
+              if (def.name === 'replaceSelectedText') {
+                proposal = await makeSelectionProposal(args.newText, 'agent', 'replace')
+              } else if (def.name === 'deleteText') {
+                proposal = await makeSelectionProposal('', 'agent', 'delete')
+              } else if (def.name === 'insertText') {
+                const snapshot = await readSelectionSnapshot()
+                const location = args.location || 'End'
+                const afterText = ['Start', 'Before'].includes(location)
+                  ? `${args.text}${snapshot.text}`
+                  : `${snapshot.text}${args.text}`
+                proposal = createTextChangeProposal({
+                  operation: 'insert',
+                  beforeText: snapshot.text,
+                  afterText,
+                  beforeOoxml: snapshot.ooxml,
+                  source: 'agent',
+                })
+              } else {
+                throw new AppError('WORD_API_UNSUPPORTED', 'This write operation is not available in safe edit mode')
+              }
+
+              const accepted = await security.requestTextChangeApproval(proposal)
+              if (!accepted) return 'The user cancelled this document edit.'
+              const appliedChange = await applyTextChangeProposal(proposal)
+              security.onTextChangeApplied?.(appliedChange)
+              return `Applied ${def.name} after user approval.`
+            }
+            return await def.execute(args)
           } catch (error: any) {
             return `Error: ${error.message || 'Unknown error occurred'}`
           }

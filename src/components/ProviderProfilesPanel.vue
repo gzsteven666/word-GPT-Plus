@@ -382,8 +382,8 @@ const saveProfile = () => {
     connectionMessage.value = error
     return
   }
-  if (!enabledModels.value.some(model => model.id === draft.value!.defaultModel)) {
-    draft.value.defaultModel = enabledModels.value[0]?.id || ''
+  if (draft.value.defaultModel && !enabledModels.value.some(model => model.id === draft.value!.defaultModel)) {
+    draft.value.defaultModel = ''
   }
   updateProfile(draft.value)
   savedSnapshot.value = JSON.stringify(draft.value)
@@ -471,8 +471,7 @@ const addManualModel = () => {
 const removeModel = (id: string) => {
   if (!draft.value) return
   draft.value.models = draft.value.models.filter(model => model.id !== id)
-  if (draft.value.defaultModel === id)
-    draft.value.defaultModel = draft.value.models.find(model => model.enabled)?.id || ''
+  if (draft.value.defaultModel === id) draft.value.defaultModel = ''
 }
 
 const setDefaultModel = (id: string) => {

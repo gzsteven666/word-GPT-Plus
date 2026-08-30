@@ -236,9 +236,34 @@
             <span>{{ $t('includeSelectionLabel') }}</span>
           </label>
         </div>
+        <div
+          v-if="lastAppliedChange"
+          class="flex items-center justify-between gap-2 rounded-md border border-success/30 bg-success/10 p-2 text-xs text-success"
+        >
+          <span>{{ $t('editApplied') }}</span>
+          <button class="rounded-md px-2 py-1 font-semibold hover:bg-success/15" @click="restoreLastEdit">
+            {{ $t('restoreLastEdit') }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
+  <EditProposalDialog
+    :proposal="pendingProposal"
+    :title="t('reviewEditTitle')"
+    :subtitle="t('reviewEditSubtitle')"
+    :before-label="t('beforeEdit')"
+    :after-label="t('afterEdit')"
+    :full-text-label="t('viewFullText')"
+    :copy-label="t('copyNewText')"
+    :cancel-label="t('cancel')"
+    :accept-label="t('applyEdit')"
+    :risk-labels="{ low: t('lowRisk'), medium: t('mediumRisk'), high: t('highRisk') }"
+    change-summary-template="+{added} / -{removed}"
+    @accept="acceptPendingProposal"
+    @cancel="cancelPendingProposal"
+    @copied="messageUtil.success(t('copied'))"
+  />
 </template>
 
 <script lang="ts" setup>
@@ -267,9 +292,16 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { type CheckpointTuple, IndexedDBSaver } from '@/api/checkpoints'
-import { insertFormattedResult, insertResult } from '@/api/common'
+import { classifyError } from '@/api/errors'
+import {
+  applyTextChangeProposal,
+  makeSelectionProposal,
+  readSelectionSnapshot,
+  restoreTextChange,
+} from '@/api/safeEdit'
 import { getAgentResponse, getChatResponse } from '@/api/union'
 import CustomButton from '@/components/CustomButton.vue'
+import EditProposalDialog from '@/components/EditProposalDialog.vue'
 import SingleSelect from '@/components/SingleSelect.vue'
 import CheckPointsPage from '@/pages/checkPointsPage.vue'
 import { checkAuth } from '@/utils/common'
@@ -285,6 +317,7 @@ import {
 } from '@/utils/providerProfiles'
 import useSettingForm from '@/utils/settingForm'
 import { settingPreset } from '@/utils/settingPreset'
+import { TextChangeProposal } from '@/utils/textProposal'
 import { createWordTools, WordToolName } from '@/utils/wordTools'
 
 const router = useRouter()
@@ -362,9 +395,34 @@ function loadEnabledGeneralTools(): GeneralToolName[] {
   return [...allGeneralToolNames]
 }
 
-function getActiveTools() {
-  const wordTools = createWordTools(enabledWordTools.value)
-  const generalTools = createGeneralTools(enabledGeneralTools.value)
+const readOnlyToolNames = new Set<WordToolName>([
+  'getSelectedText',
+  'getDocumentContent',
+  'getDocumentProperties',
+  'getRangeInfo',
+  'getTableInfo',
+  'findText',
+])
+const safeTextWriteToolNames = new Set<WordToolName>(['insertText', 'replaceSelectedText', 'deleteText'])
+
+function getActiveTools(taskText = '') {
+  const normalized = taskText.toLowerCase()
+  const needsWrite =
+    /修改|改写|润色|替换|删除|插入|添加|追加|格式|排版|rewrite|edit|replace|delete|insert|format/i.test(normalized)
+  const needsWeb = /网页|网络|搜索|查资料|网址|web|search|url/i.test(normalized)
+  const needsGeneral = needsWeb || /计算|日期|calculate|date/i.test(normalized)
+  const selectedWordTools = enabledWordTools.value.filter(name => {
+    if (readOnlyToolNames.has(name)) return true
+    return needsWrite && safeTextWriteToolNames.has(name)
+  })
+  const selectedGeneralTools = needsGeneral ? enabledGeneralTools.value : []
+  const wordTools = createWordTools(selectedWordTools, {
+    requestTextChangeApproval: requestAgentTextChangeApproval,
+    onTextChangeApplied: change => {
+      lastAppliedChange.value = change
+    },
+  })
+  const generalTools = createGeneralTools(selectedGeneralTools)
   return [...generalTools, ...wordTools]
 }
 
@@ -417,6 +475,9 @@ const useSelectedText = useStorage(localStorageKey.useSelectedText, true)
 const insertType = ref<insertTypes>('replace')
 
 const errorIssue = ref<boolean | string | null>(false)
+const pendingProposal = ref<TextChangeProposal | null>(null)
+const lastAppliedChange = ref<Awaited<ReturnType<typeof applyTextChangeProposal>> | null>(null)
+const agentApprovalResolver = ref<((accepted: boolean) => void) | null>(null)
 
 const displayHistory = computed(() => {
   return history.value.filter(msg => !(msg instanceof SystemMessage))
@@ -638,8 +699,7 @@ async function sendMessage() {
     if (error.name === 'AbortError') {
       messageUtil.info(t('generationStop'))
     } else {
-      console.error(error)
-      messageUtil.error(t('failedToResponse'))
+      messageUtil.error(t(classifyError(error).code))
       history.value.pop()
     }
   } finally {
@@ -683,8 +743,7 @@ async function applyQuickAction(actionKey: keyof typeof buildInPrompt) {
     if (error.name === 'AbortError') {
       messageUtil.info(t('generationStop'))
     } else {
-      console.error(error)
-      messageUtil.error(t('failedToProcessAction'))
+      messageUtil.error(t(classifyError(error).code))
       // Remove failed message
       history.value.pop()
     }
@@ -797,12 +856,17 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
 
   // Use agent mode with tools if enabled
   if (isAgentMode) {
-    const tools = getActiveTools()
+    const tools = getActiveTools(getMessageText(userMessage))
 
     await getAgentResponse({
       ...currentConfig,
       recursionLimit:
         provider === 'official' ? activeProfile.value?.agentMaxIterations || 25 : settings.agentMaxIterations,
+      maxToolCalls: Math.max(
+        10,
+        (provider === 'official' ? activeProfile.value?.agentMaxIterations || 25 : settings.agentMaxIterations) * 2,
+      ),
+      maxDurationMs: Math.max(120000, (provider === 'official' ? activeProfile.value?.timeoutMs || 60000 : 60000) * 3),
       messages: finalMessages,
       tools,
       errorIssue,
@@ -865,11 +929,63 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
 
 async function insertToDocument(content: string, type: insertTypes) {
   insertType.value = type
+  if (type === 'NoAction') return
 
-  if (useWordFormatting.value) {
-    await insertFormattedResult(content, insertType)
-  } else {
-    insertResult(content, insertType)
+  try {
+    const snapshot = await readSelectionSnapshot()
+    const afterText =
+      type === 'replace' ? content : type === 'append' ? `${snapshot.text}${content}` : `${snapshot.text}\n${content}`
+    pendingProposal.value = await makeSelectionProposal(afterText, 'chat', 'replace')
+  } catch (error) {
+    const classified = classifyError(error)
+    messageUtil.error(t(classified.code))
+  }
+}
+
+const acceptPendingProposal = async () => {
+  const proposal = pendingProposal.value
+  if (!proposal) return
+
+  if (agentApprovalResolver.value) {
+    const resolve = agentApprovalResolver.value
+    agentApprovalResolver.value = null
+    pendingProposal.value = null
+    resolve(true)
+    return
+  }
+
+  try {
+    lastAppliedChange.value = await applyTextChangeProposal(proposal)
+    pendingProposal.value = null
+    messageUtil.success(t('editApplied'))
+  } catch (error) {
+    pendingProposal.value = null
+    messageUtil.error(t(classifyError(error).code))
+  }
+}
+
+const cancelPendingProposal = () => {
+  const resolve = agentApprovalResolver.value
+  agentApprovalResolver.value = null
+  if (pendingProposal.value) pendingProposal.value.status = 'cancelled'
+  pendingProposal.value = null
+  resolve?.(false)
+}
+
+const requestAgentTextChangeApproval = (proposal: TextChangeProposal): Promise<boolean> =>
+  new Promise(resolve => {
+    pendingProposal.value = proposal
+    agentApprovalResolver.value = resolve
+  })
+
+const restoreLastEdit = async () => {
+  if (!lastAppliedChange.value) return
+  try {
+    await restoreTextChange(lastAppliedChange.value)
+    lastAppliedChange.value = null
+    messageUtil.success(t('editRestored'))
+  } catch (error) {
+    messageUtil.error(t(classifyError(error).code))
   }
 }
 

@@ -7,6 +7,7 @@ import { AzureChatOpenAI, ChatOpenAI } from '@langchain/openai'
 import { createAgent } from 'langchain'
 
 import { IndexedDBSaver } from '@/api/checkpoints'
+import { classifyError, safeLog } from '@/api/errors'
 
 import {
   AgentOptions,
@@ -100,11 +101,11 @@ async function executeChatFlow(model: BaseChatModel, options: ProviderOptions): 
     }
   } catch (error: any) {
     if (error.name === 'AbortError' || options.abortSignal?.aborted) {
-      // Don't mark as error if intentionally aborted
       throw error
     }
-    options.errorIssue.value = true
-    console.error(error)
+    const classified = classifyError(error)
+    options.errorIssue.value = classified.code
+    safeLog('chat.error', { code: classified.code, status: classified.status })
   } finally {
     options.loading.value = false
   }
@@ -114,7 +115,6 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
   try {
     if (!options.threadId) {
       options.threadId = crypto.randomUUID()
-      console.log(`[Agent] New thread started: ${options.threadId}`)
     }
     const agent = createAgent({
       model,
@@ -139,8 +139,10 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
 
     let fullContent = ''
     let stepCount = 0
+    let totalToolCalls = 0
     let lastToolSignature = ''
     let repeatedToolCalls = 0
+    const startedAt = Date.now()
 
     for await (const step of stream) {
       if (options.abortSignal?.aborted) {
@@ -148,9 +150,15 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
       }
 
       stepCount++
-      console.log(`[Agent] Step ${stepCount}:`, {
+      if (options.maxDurationMs && Date.now() - startedAt > options.maxDurationMs) {
+        const budgetError = new Error('Agent maximum duration budget exceeded')
+        budgetError.name = 'AgentBudgetError'
+        throw budgetError
+      }
+      safeLog('agent.step', {
+        step: stepCount,
         messageCount: step.messages?.length || 0,
-        lastMessageType: step.messages?.[step.messages.length - 1]?.constructor?.name,
+        lastMessageType: step.messages?.[step.messages.length - 1]?.constructor?.name || 'unknown',
       })
 
       const messages = step.messages || []
@@ -161,12 +169,18 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
       // Cast to any for accessing tool-related properties
       const msg = lastMessage as any
 
-      console.log(`[Agent] Message type: ${msg._getType?.() || 'unknown'}`)
+      safeLog('agent.message', { type: msg._getType?.() || 'unknown' })
 
       // Handle AI messages with tool calls
       if (msg._getType?.() === 'ai' && msg.tool_calls?.length > 0) {
-        console.log('[Agent] Tool calls detected:', msg.tool_calls.length)
+        safeLog('agent.tool_calls', { count: msg.tool_calls.length })
         for (const toolCall of msg.tool_calls) {
+          totalToolCalls++
+          if (options.maxToolCalls && totalToolCalls > options.maxToolCalls) {
+            const budgetError = new Error('Agent maximum tool call budget exceeded')
+            budgetError.name = 'AgentBudgetError'
+            throw budgetError
+          }
           const signature = `${toolCall.name}:${JSON.stringify(toolCall.args || {})}`
           repeatedToolCalls = signature === lastToolSignature ? repeatedToolCalls + 1 : 1
           lastToolSignature = signature
@@ -183,10 +197,7 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
       if (msg._getType?.() === 'tool') {
         const toolName = msg.name || 'unknown'
         const toolContent = String(msg.content || '')
-        console.log('[Agent] Tool result:', {
-          name: toolName,
-          contentLength: toolContent.length,
-        })
+        safeLog('agent.tool_result', { name: toolName, contentLength: toolContent.length })
         if (options.onToolResult) {
           options.onToolResult(toolName, toolContent)
         }
@@ -202,21 +213,14 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
       }
     }
 
-    console.log('[Agent] Flow completed. Total steps:', stepCount)
+    safeLog('agent.completed', { steps: stepCount })
   } catch (error: any) {
-    console.error('[Agent] Error:', error)
     if (error.name === 'AbortError' || options.abortSignal?.aborted) {
       throw error
     }
-    if (error.name === 'GraphRecursionError') {
-      options.errorIssue.value = 'recursionLimitExceeded'
-    } else if (error.name === 'AgentLoopError') {
-      options.errorIssue.value = 'agentRepeatedToolCalls'
-    } else {
-      options.errorIssue.value = true
-    }
-    // TODO: more specific error handling based on provider error
-    console.error(error)
+    const classified = classifyError(error)
+    options.errorIssue.value = error.name === 'AgentBudgetError' ? 'AGENT_BUDGET' : classified.code
+    safeLog('agent.error', { code: options.errorIssue.value, status: classified.status })
   } finally {
     options.loading.value = false
   }

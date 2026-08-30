@@ -91,6 +91,15 @@
                 :step="1"
               />
             </SettingCard>
+            <SettingCard>
+              <label class="flex cursor-pointer items-center justify-between gap-2 p-3 text-xs text-secondary">
+                <span>
+                  <span class="block font-semibold text-main">{{ t('diagnosticsMode') }}</span>
+                  <span class="block text-[11px]">{{ t('diagnosticsModeDescription') }}</span>
+                </span>
+                <input v-model="diagnosticsEnabled" type="checkbox" />
+              </label>
+            </SettingCard>
           </div>
 
           <!-- API Provider Settings -->
@@ -502,6 +511,11 @@ const router = useRouter()
 const settingForm = useSettingForm()
 
 const currentTab = ref('provider')
+const diagnosticsEnabled = ref(localStorage.getItem('diagnosticsEnabled') === 'true')
+
+watch(diagnosticsEnabled, enabled => {
+  localStorage.setItem('diagnosticsEnabled', String(enabled))
+})
 
 // Word tools list
 const wordToolsList = [...getGeneralToolDefinitions(), ...getWordToolDefinitions()]
@@ -649,13 +663,10 @@ const removeCustomModel = (platform: string, model: string) => {
   customModelsMap.value[platform] = customModelsMap.value[platform].filter(m => m !== model)
   ;(settingPreset[key] as any).saveFunc(customModelsMap.value[platform])
 
-  // If the removed model was selected, switch to first available
+  // Do not silently switch providers or models. Require an explicit choice.
   const selectKey = `${platform}ModelSelect` as SettingNames
   if (settingForm.value[selectKey] === model) {
-    const options = getMergedModelOptions(platform)
-    if (options.length > 0) {
-      ;(settingForm.value as any)[selectKey] = options[0]
-    }
+    ;(settingForm.value as any)[selectKey] = ''
   }
 }
 
@@ -748,11 +759,10 @@ const addWatch = () => {
       () => {
         if (settingPreset[key].saveFunc) {
           ;(settingPreset[key] as any).saveFunc(settingForm.value[key])
-          console.log(`Saved setting ${key} via custom saveFunc with value: ${settingForm.value[key]}`)
           return
         }
         localStorage.setItem(settingPreset[key].saveKey || key, settingForm.value[key] as string)
-        console.log(`Saved setting ${key} to localStorage with value: ${settingForm.value[key]}`)
+        return
       },
       { deep: true },
     )

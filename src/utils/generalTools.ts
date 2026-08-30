@@ -168,10 +168,7 @@ export const generalToolDefinitions: GeneralToolDefinition[] = [
 ]
 
 export function createGeneralTools(enabledTools?: GeneralToolName[]): DynamicStructuredTool[] {
-  if (!enabledTools || enabledTools.length === 0) {
-    return generalToolDefinitions.map(def => def.tool)
-  }
-
+  if (!enabledTools) return generalToolDefinitions.map(def => def.tool)
   return generalToolDefinitions.filter(def => enabledTools.includes(def.name)).map(def => def.tool)
 }
 

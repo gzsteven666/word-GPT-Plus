@@ -3,6 +3,8 @@ import { BaseCheckpointSaver, Checkpoint, CheckpointMetadata, type CheckpointTup
 export type { CheckpointTuple }
 import Dexie, { Table } from 'dexie'
 
+import { safeLog } from '@/api/errors'
+
 export interface Thread {
   id: string
   title: string
@@ -58,7 +60,7 @@ export class IndexedDBSaver extends BaseCheckpointSaver {
   async getTuple(config: RunnableConfig): Promise<CheckpointTuple | undefined> {
     try {
       if (!config.configurable?.thread_id) {
-        console.warn('[IndexedDBSaver] getTuple: missing thread_id')
+        safeLog('checkpoint.missing_thread')
         return undefined // ✅ 返回 undefined 而不是抛错
       }
 
@@ -79,7 +81,7 @@ export class IndexedDBSaver extends BaseCheckpointSaver {
       }
 
       if (!row) {
-        console.log('[IndexedDBSaver] getTuple: no checkpoint found')
+        safeLog('checkpoint.not_found')
         return undefined
       }
 
@@ -95,8 +97,8 @@ export class IndexedDBSaver extends BaseCheckpointSaver {
           ? { configurable: { thread_id, checkpoint_id: row.parent_checkpoint_id } }
           : undefined,
       }
-    } catch (error) {
-      console.error('[IndexedDBSaver] getTuple error:', error)
+    } catch (_error) {
+      safeLog('checkpoint.get_error')
       return undefined
     }
   }
@@ -144,7 +146,7 @@ export class IndexedDBSaver extends BaseCheckpointSaver {
 
       const checkpoint_id = config.configurable?.checkpoint_id || checkpoint.id || crypto.randomUUID()
 
-      console.log('[IndexedDBSaver] put:', { thread_id, checkpoint_id })
+      safeLog('checkpoint.saved')
 
       await db.checkpoints.put({
         thread_id,
@@ -161,7 +163,7 @@ export class IndexedDBSaver extends BaseCheckpointSaver {
         },
       }
     } catch (error) {
-      console.error('[IndexedDBSaver] put error:', error)
+      safeLog('checkpoint.put_error')
       throw error
     }
   }
@@ -211,7 +213,7 @@ export class IndexedDBSaver extends BaseCheckpointSaver {
 
       await this.put(checkpointConfig, newCheckpoint, newMetadata)
     } catch (error) {
-      console.error('[IndexedDBSaver] putWrites error:', error)
+      safeLog('checkpoint.put_writes_error')
       throw error
     }
   }
