@@ -48,6 +48,7 @@ assert.equal(secondInstance[0].name, 'apply_document_patch')
 assert.equal(sharedState.textProposals.size, 0)
 assert.equal(sharedState.appliedTextChanges.size, 0)
 assert.equal(sharedState.formatRequests.size, 0)
+assert.equal(sharedState.activeFormatRequestId, null)
 assert.equal(sharedState.appliedFormatRequests.size, 0)
 
 // Fresh states are independent.
@@ -69,7 +70,21 @@ assert.deepEqual(
 assert.deepEqual(extractFormatChanges({ scope: 'document' }), {})
 
 // Confirmation intent detection.
-for (const yes of ['是', '确定', '执行', '可以', '好的', '选中了', 'ok', 'Yes', 'OK', 'apply', 'go ahead', '确认']) {
+for (const yes of [
+  '是',
+  '确定',
+  '执行',
+  '可以',
+  '好的',
+  '选中了',
+  'ok',
+  'Yes',
+  'OK',
+  'apply',
+  'go ahead',
+  '确认',
+  '确定\n\n[Selected text: "Some selected text"]',
+]) {
   assert.equal(isConfirmationIntent(yes), true, `expected confirmation: ${yes}`)
 }
 for (const no of ['请改写这段文字', '把第一段设置成12号字体', '查一下最新消息', '帮我总结一下', '', '  ']) {

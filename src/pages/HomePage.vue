@@ -386,7 +386,7 @@ function getActiveTools(taskText = '') {
   // so keep the write tools from the previous turn available for continuing.
   const isConfirmation = isConfirmationIntent(taskText)
   const hasPendingTextProposal = taskToolState.textProposals.size > 0
-  const hasPendingFormatRequest = taskToolState.formatRequests.size > 0
+  const hasPendingFormatRequest = taskToolState.activeFormatRequestId !== null
 
   const taskToolNames: TaskToolName[] = []
 
@@ -770,8 +770,8 @@ You are a highly skilled Microsoft Word Expert Agent. Your goal is to assist use
 
 # Guidelines
 1. **Tool First**: If a request requires document modification or inspection or web search and fetch, you MUST use the available tools. Never claim the environment cannot write or format the document while tools are loaded — the tools are the write path.
-2. **Two-phase flow for anything the user wants to review**: call propose_document_patch or propose_format_patch first, show the returned plan to the user, and wait. When the user confirms in a later message (是 / 确定 / 执行 / apply / ok), call the matching apply_* tool with the exact proposalId/formatId returned earlier.
-3. **Never invent IDs**: use only the proposalId/formatId returned by a previous propose_* call.
+2. **Two-phase flow for anything the user wants to review**: call propose_document_patch or propose_format_patch first, show the returned plan to the user, and wait. Decide from the user's next message whether they confirmed it. When they did, call the matching apply_* tool with the exact proposalId/formatId supplied in the active-proposal context. Do not ask for duplicate confirmation or create a replacement proposal after a clear confirmation.
+3. **Never invent IDs**: use only the proposalId/formatId returned by a previous propose_* call or supplied in the active-proposal context.
 4. **Formatting units**: 字号 → fontSize in points (12 = 12号); 1.5 倍行距 → lineSpacingMultiple: 1.5; 段后间距 → spaceAfter in points; 两端对齐 → alignment: 'Justified'.
 5. **Accuracy**: Ensure formatting and content changes are precise and follow the user's intent. After applying, report the verification result.
 6. **Conciseness**: Provide brief, helpful explanations of your actions.
@@ -795,8 +795,15 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
     return
   }
 
-  const finalSystemMessage =
+  const baseSystemMessage =
     customSystemPrompt.value || systemMessage || (isAgentMode ? agentPrompt(lang) : standardPrompt(lang))
+  const activeFormatRequest = taskToolState.activeFormatRequestId
+    ? taskToolState.formatRequests.get(taskToolState.activeFormatRequestId)
+    : undefined
+  const pendingFormatContext = activeFormatRequest
+    ? `\n\n# Active formatting proposal\nformatId=${activeFormatRequest.id}; scope=${activeFormatRequest.scope}; changes=${JSON.stringify(activeFormatRequest.changes)}\nUse this exact formatId if you determine that the user confirmed this plan. Do not create a replacement proposal unless the user asks to change the plan.`
+    : ''
+  const finalSystemMessage = `${baseSystemMessage}${pendingFormatContext}`
 
   const defaultSystemMessage = new SystemMessage(finalSystemMessage)
 
@@ -861,11 +868,13 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
     return
   }
 
+  const taskText = getMessageText(userMessage)
+  const tools = isAgentMode ? getActiveTools(taskText) : []
+
   history.value.push(new AIMessage(''))
 
   // Use agent mode with tools if enabled
   if (isAgentMode) {
-    const tools = getActiveTools(getMessageText(userMessage))
     const agentIterations =
       provider === 'official' ? activeProfile.value?.agentMaxIterations || 25 : settings.agentMaxIterations
 

@@ -39,6 +39,7 @@ export interface TaskToolState {
   textProposals: Map<string, TextChangeProposal>
   appliedTextChanges: Map<string, AppliedTextChange>
   formatRequests: Map<string, FormatRequest>
+  activeFormatRequestId: string | null
   appliedFormatRequests: Map<string, FormatRequest>
 }
 
@@ -46,6 +47,7 @@ export const createTaskToolState = (): TaskToolState => ({
   textProposals: new Map(),
   appliedTextChanges: new Map(),
   formatRequests: new Map(),
+  activeFormatRequestId: null,
   appliedFormatRequests: new Map(),
 })
 
@@ -62,7 +64,7 @@ export interface TaskToolSecurity {
  * write tools from the previous turn to stay available.
  */
 export const isConfirmationIntent = (text: string): boolean =>
-  /^(是|好|好的|确定|确认|可以|执行|应用|继续|同意|没问题|选中了|已选中|完成|yes|ok|okay|confirm|apply|proceed|go ahead|sure|selected|done|accept|fine)[！!。.，,\s]*$/i.test(
+  /^(是|好|好的|确定|确认|可以|执行|应用|继续|同意|没问题|选中了|已选中|完成|yes|ok|okay|confirm|apply|proceed|go ahead|sure|selected|done|accept|fine)[！!。.，,\s]*(?:\n\n\[Selected text: "[\s\S]*"\])?$/i.test(
     text.trim(),
   )
 
@@ -420,7 +422,11 @@ export const createTaskTools = (
             changes,
             beforeHash,
           }
+          // One active proposal is exposed to the next agent turn. Creating a
+          // replacement plan supersedes the previous unconfirmed plan.
+          if (state.activeFormatRequestId) state.formatRequests.delete(state.activeFormatRequestId)
           state.formatRequests.set(request.id, request)
+          state.activeFormatRequestId = request.id
           return JSON.stringify({
             formatId: request.id,
             scope: request.scope,
@@ -456,22 +462,32 @@ export const createTaskTools = (
           }
 
           const request = state.formatRequests.get(args.formatId)
-          if (!request) throw new AppError('REQUEST_FAILED', 'The format proposal was not found or has expired')
+          if (!request || args.formatId !== state.activeFormatRequestId) {
+            throw new AppError(
+              'REQUEST_FAILED',
+              'The format proposal was not found, is no longer active, or has expired',
+            )
+          }
           if (!security?.requestFormatApproval) {
             throw new AppError('REQUEST_FAILED', 'A user approval handler is required before applying formatting')
           }
           if (!(await security.requestFormatApproval(request))) {
+            state.formatRequests.delete(request.id)
+            state.activeFormatRequestId = null
             return JSON.stringify({ formatId: request.id, status: 'cancelled' })
           }
 
           const currentHash = await readCurrentHash(request.scope)
           if (currentHash !== request.beforeHash) {
+            state.formatRequests.delete(request.id)
+            state.activeFormatRequestId = null
             throw new AppError('DOCUMENT_CONFLICT', 'The document changed while formatting was awaiting approval')
           }
 
           await applyFormatRequest(request)
           state.appliedFormatRequests.set(request.id, request)
           state.formatRequests.delete(request.id)
+          state.activeFormatRequestId = null
           const verification = await verifyFormatRequest(request)
           return JSON.stringify({ formatId: request.id, status: 'applied', verification })
         },
