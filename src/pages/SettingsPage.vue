@@ -16,9 +16,14 @@
           />
         </div>
         <div class="flex-1">
-          <h2 class="text-sm font-semibold text-main">
-            {{ $t('settings') || 'Settings' }}
-          </h2>
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-semibold text-main">
+              {{ $t('settings') || 'Settings' }}
+            </h2>
+            <span class="rounded-full border border-border px-1.5 py-0.5 text-[10px] text-secondary"
+              >v{{ appVersion }}</span
+            >
+          </div>
         </div>
       </div>
 
@@ -507,6 +512,7 @@ import useSettingForm from '@/utils/settingForm'
 import { Setting_Names, SettingNames, settingPreset } from '@/utils/settingPreset'
 import { getWordToolDefinitions } from '@/utils/wordTools'
 const { t } = useI18n()
+const appVersion = __APP_VERSION__
 const router = useRouter()
 const settingForm = useSettingForm()
 

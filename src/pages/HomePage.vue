@@ -18,6 +18,9 @@
         <div class="flex flex-1 items-center gap-2 text-accent">
           <Sparkles :size="18" />
           <span class="text-sm font-semibold text-main">Word GPT+</span>
+          <span class="rounded-full border border-border px-1.5 py-0.5 text-[10px] text-secondary"
+            >v{{ appVersion }}</span
+          >
         </div>
         <div class="flex items-center gap-1 rounded-md border border-accent/10">
           <CustomButton
@@ -322,6 +325,7 @@ import { createWordTools, WordToolName } from '@/utils/wordTools'
 
 const router = useRouter()
 const { t } = useI18n()
+const appVersion = __APP_VERSION__
 
 const settingForm = useSettingForm()
 const { profiles, activeProfileId, activeProfile, setActiveProfile, updateProfile } = useProviderProfiles()

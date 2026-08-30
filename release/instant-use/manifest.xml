@@ -12,7 +12,7 @@
   <Id>6d77c5ce-b83f-42dd-b8cd-40b48fd32970</Id>
 
   <!--Version. Updates from the store only get triggered if there is a version change. -->
-  <Version>1.0.0.0</Version>
+  <Version>2.2.0.0</Version>
   <ProviderName>gzsteven666</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <!-- The display name of your add-in. Used on the store and various places of the Office UI such as the add-ins dialog. -->

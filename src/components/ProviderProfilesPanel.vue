@@ -88,7 +88,21 @@
                   min="0"
                   max="131072"
                   step="1"
-                />
+                >
+                  <template #title-extra>
+                    <span class="rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
+                      {{ draft.maxTokens === 0 ? t('automatic') : t('custom') }}
+                    </span>
+                  </template>
+                </CustomInput>
+                <p v-if="draft.maxTokens === 0" class="-mt-2 text-[11px] text-secondary">
+                  {{
+                    t('automaticTokensDetail', {
+                      chat: automaticChatTokens,
+                      agent: automaticAgentTokens,
+                    })
+                  }}
+                </p>
                 <CustomInput
                   v-model.number="draft.timeoutMs"
                   :title="t('requestTimeoutMs')"
@@ -269,6 +283,7 @@ import {
   ProviderModel,
   ProviderProfile,
   providerTemplates,
+  resolveMaxTokens,
   useProviderProfiles,
 } from '@/utils/providerProfiles'
 
@@ -297,6 +312,9 @@ const capabilityItems: { key: ModelCapability; label: string; icon: any }[] = [
 
 const dirty = computed(() => !!draft.value && JSON.stringify(draft.value) !== savedSnapshot.value)
 const enabledModels = computed(() => draft.value?.models.filter(model => model.enabled) || [])
+const selectedModel = computed(() => draft.value?.models.find(model => model.id === draft.value?.defaultModel))
+const automaticChatTokens = computed(() => resolveMaxTokens(0, selectedModel.value, false))
+const automaticAgentTokens = computed(() => resolveMaxTokens(0, selectedModel.value, true))
 const modelsEndpoint = computed(() => `${draft.value?.baseURL?.replace(/\/+$/, '') || '—'}/models`)
 
 watch(

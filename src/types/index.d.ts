@@ -1,3 +1,5 @@
+declare const __APP_VERSION__: string
+
 type IStringKeyMap = Record<string, any>
 
 type supportedPlatforms = 'official' | 'azure' | 'gemini' | 'ollama' | 'groq'
