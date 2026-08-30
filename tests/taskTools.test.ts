@@ -8,10 +8,16 @@ assert.deepEqual(
   ['read_document_structure', 'read_range'],
 )
 
-const editTools = createTaskTools(['read_range', 'propose_document_patch', 'apply_document_patch', 'verify_patch'])
+const editTools = createTaskTools([
+  'read_range',
+  'propose_document_patch',
+  'apply_document_patch',
+  'format_document_selection',
+  'verify_patch',
+])
 assert.deepEqual(
   editTools.map(tool => tool.name),
-  ['read_range', 'propose_document_patch', 'apply_document_patch', 'verify_patch'],
+  ['read_range', 'propose_document_patch', 'apply_document_patch', 'format_document_selection', 'verify_patch'],
 )
 
 assert.equal(createTaskTools([]).length, 0)

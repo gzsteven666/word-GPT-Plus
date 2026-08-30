@@ -90,6 +90,7 @@
   "failedToProcessAction": "Failed to process action",
   "failedToResponse": "Failed to get response",
   "fetchModels": "Fetch model list",
+  "formatApprovalConfirm": "Allow formatting {scope} with these changes? {changes}",
   "geminiAPIKeyLabel": "API Key",
   "geminiAPIKeyPlaceholder": "API key",
   "geminiCustomModelLabel": "Custom Model",

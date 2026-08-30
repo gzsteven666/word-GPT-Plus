@@ -320,7 +320,7 @@ import {
 } from '@/utils/providerProfiles'
 import useSettingForm from '@/utils/settingForm'
 import { settingPreset } from '@/utils/settingPreset'
-import { createTaskTools, TaskToolName } from '@/utils/taskTools'
+import { createTaskTools, FormatRequest, TaskToolName } from '@/utils/taskTools'
 import { TextChangeProposal } from '@/utils/textProposal'
 
 const router = useRouter()
@@ -359,10 +359,11 @@ function loadEnabledGeneralTools(): GeneralToolName[] {
 
 function getActiveTools(taskText = '') {
   const normalized = taskText.toLowerCase()
-  const needsWrite =
-    /修改|改写|润色|替换|删除|插入|添加|追加|格式|排版|rewrite|edit|replace|delete|insert|format|review|审阅/i.test(
-      normalized,
-    )
+  const needsFormat = /格式|排版|美化|字体|字号|行距|对齐|style|format|layout|beautify/i.test(normalized)
+  const needsTextEdit = /改写|润色|替换|删除|插入|添加|追加|rewrite|replace|delete|insert|revise|edit text/i.test(
+    normalized,
+  )
+  const needsWrite = needsFormat || needsTextEdit
   const needsRead = /读取|查看|阅读|选区|内容|总结|摘要|read|inspect|selected|summarize|summary/i.test(normalized)
   const needsWeb = /网页|网络|搜索|查资料|网址|web|search|url/i.test(normalized)
   const needsGeneral = needsWeb || /计算|日期|calculate|date/i.test(normalized)
@@ -373,10 +374,12 @@ function getActiveTools(taskText = '') {
 
   if (needsStructure) taskToolNames.push('read_document_structure')
   if (needsRead || needsWrite || needsStructure) taskToolNames.push('read_range')
-  if (needsWrite) taskToolNames.push('propose_document_patch', 'apply_document_patch', 'verify_patch')
+  if (needsTextEdit) taskToolNames.push('propose_document_patch', 'apply_document_patch', 'verify_patch')
+  if (needsFormat) taskToolNames.push('format_document_selection')
 
   const taskTools = createTaskTools(taskToolNames, {
     requestTextChangeApproval: requestAgentTextChangeApproval,
+    requestFormatApproval,
     requestSensitiveDataApproval,
     onTextChangeApplied: change => {
       lastAppliedChange.value = change
@@ -831,7 +834,7 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
       maxExternalRequests: 5,
       maxCostUsd: 1,
       estimatedCostPerModelCallUsd: 0.01,
-      writeToolNames: ['apply_document_patch'],
+      writeToolNames: ['apply_document_patch', 'format_document_selection'],
       externalToolNames: ['fetchWebContent', 'searchWeb'],
       maxDurationMs: Math.max(120000, (provider === 'official' ? activeProfile.value?.timeoutMs || 60000 : 60000) * 3),
       messages: finalMessages,
@@ -952,6 +955,13 @@ const requestExternalNetworkApproval = async (toolName: GeneralToolName, args: u
 }
 
 const requestSensitiveDataApproval = async (scope: string) => window.confirm(t('documentDataConfirm', { scope }))
+
+const requestFormatApproval = async (request: FormatRequest) => {
+  const changes = Object.entries(request.changes)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(', ')
+  return window.confirm(t('formatApprovalConfirm', { scope: request.scope, changes }))
+}
 
 const restoreLastEdit = async () => {
   if (!lastAppliedChange.value) return

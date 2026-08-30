@@ -91,7 +91,9 @@
   "externalNetworkConfirm": "允许 {tool} 访问外部网络以获取以下内容吗：{target}？",
   "failedToProcessAction": "处理操作失败",
   "failedToResponse": "获取响应失败",
+
   "fetchModels": "获取模型列表",
+  "formatApprovalConfirm": "允许对{scope}执行以下排版修改吗？{changes}",
   "geminiAPIKeyLabel": "API 密钥",
   "geminiAPIKeyPlaceholder": "API 密钥",
   "geminiCustomModelLabel": "自定义模型",

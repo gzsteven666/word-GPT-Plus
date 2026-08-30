@@ -10,17 +10,26 @@ import {
   restoreTextChange,
   verifyTextChange,
 } from '@/api/safeEdit'
-import { buildTextDiff, createTextChangeProposal, TextChangeProposal } from '@/utils/textProposal'
+import { buildTextDiff, createTextChangeProposal, hashText, TextChangeProposal } from '@/utils/textProposal'
 
 export type TaskToolName =
   | 'read_document_structure'
   | 'read_range'
   | 'propose_document_patch'
   | 'apply_document_patch'
+  | 'format_document_selection'
   | 'verify_patch'
+
+export interface FormatRequest {
+  id: string
+  scope: 'selection' | 'document'
+  changes: Record<string, boolean | number | string>
+  beforeHash?: string
+}
 
 export interface TaskToolSecurity {
   requestTextChangeApproval?: (proposal: TextChangeProposal) => Promise<boolean>
+  requestFormatApproval?: (request: FormatRequest) => Promise<boolean>
   requestSensitiveDataApproval?: (scope: string) => Promise<boolean>
   onTextChangeApplied?: (change: AppliedTextChange) => void
 }
@@ -59,6 +68,7 @@ const createProposalFromSelection = async (
 export const createTaskTools = (enabledTools?: TaskToolName[], security?: TaskToolSecurity) => {
   const proposals = new Map<string, TextChangeProposal>()
   const appliedChanges = new Map<string, AppliedTextChange>()
+  const appliedFormatRequests = new Map<string, FormatRequest>()
   const shouldEnable = (name: TaskToolName) => !enabledTools || enabledTools.includes(name)
   const tools = []
 
@@ -164,6 +174,123 @@ export const createTaskTools = (enabledTools?: TaskToolName[], security?: TaskTo
           description:
             'Apply a previously proposed patch only after explicit user approval. The operation is guarded by the original selection hash and proposal ID.',
           schema: z.object({ proposalId: z.string().describe('The proposalId returned by propose_document_patch') }),
+        },
+      ),
+    )
+  }
+
+  if (shouldEnable('format_document_selection')) {
+    tools.push(
+      tool(
+        async input => {
+          const args = input as {
+            scope: 'selection' | 'document'
+            operationId?: string
+            bold?: boolean
+            italic?: boolean
+            underline?: boolean
+            fontName?: string
+            fontSize?: number
+            fontColor?: string
+            highlightColor?: string
+            alignment?: 'Left' | 'Center' | 'Right' | 'Justify'
+            lineSpacing?: number
+            spaceAfter?: number
+          }
+          const changes = Object.fromEntries(
+            Object.entries(args).filter(
+              ([key, value]) => !['scope', 'operationId'].includes(key) && value !== undefined,
+            ),
+          ) as Record<string, boolean | number | string>
+          if (Object.keys(changes).length === 0) {
+            throw new AppError('REQUEST_FAILED', 'At least one formatting change is required')
+          }
+          if (args.operationId && appliedFormatRequests.has(args.operationId)) {
+            return JSON.stringify({ operationId: args.operationId, status: 'already_applied', idempotent: true })
+          }
+          const beforeHash =
+            args.scope === 'selection'
+              ? (await readSelectionSnapshot()).hash
+              : await Word.run(async context => {
+                  const body = context.document.body
+                  body.load('text')
+                  await context.sync()
+                  return hashText(body.text || '')
+                })
+          const request: FormatRequest = {
+            id: args.operationId || crypto.randomUUID(),
+            scope: args.scope,
+            changes,
+            beforeHash,
+          }
+          if (!security?.requestFormatApproval) {
+            throw new AppError('REQUEST_FAILED', 'A user approval handler is required before applying formatting')
+          }
+          if (!(await security.requestFormatApproval(request))) {
+            return JSON.stringify({ operationId: request.id, status: 'cancelled' })
+          }
+          const currentHash =
+            request.scope === 'selection'
+              ? (await readSelectionSnapshot()).hash
+              : await Word.run(async context => {
+                  const body = context.document.body
+                  body.load('text')
+                  await context.sync()
+                  return hashText(body.text || '')
+                })
+          if (currentHash !== request.beforeHash) {
+            throw new AppError('DOCUMENT_CONFLICT', 'The document changed while formatting was awaiting approval')
+          }
+
+          await Word.run(async context => {
+            const range =
+              request.scope === 'document' ? context.document.body.getRange() : context.document.getSelection()
+            if (args.bold !== undefined) range.font.bold = args.bold
+            if (args.italic !== undefined) range.font.italic = args.italic
+            if (args.underline !== undefined) range.font.underline = args.underline ? 'Single' : 'None'
+            if (args.fontName) range.font.name = args.fontName
+            if (args.fontSize !== undefined) range.font.size = args.fontSize
+            if (args.fontColor) range.font.color = args.fontColor
+            if (args.highlightColor) range.font.highlightColor = args.highlightColor
+            if (args.alignment || args.lineSpacing !== undefined || args.spaceAfter !== undefined) {
+              const paragraphs = range.paragraphs
+              paragraphs.load('items')
+              await context.sync()
+              for (const paragraph of paragraphs.items) {
+                if (args.alignment) paragraph.alignment = args.alignment as Word.Alignment
+                if (args.lineSpacing !== undefined) paragraph.lineSpacing = args.lineSpacing
+                if (args.spaceAfter !== undefined) paragraph.spaceAfter = args.spaceAfter
+              }
+            }
+            await context.sync()
+          })
+          appliedFormatRequests.set(request.id, request)
+          return JSON.stringify({ operationId: request.id, status: 'applied', changes: request.changes })
+        },
+        {
+          name: 'format_document_selection',
+          description:
+            'Apply explicit, user-approved formatting to the current selection or the whole document. This changes styles only and never changes text content.',
+          schema: z.object({
+            scope: z.enum(['selection', 'document']).default('selection'),
+            operationId: z
+              .string()
+              .optional()
+              .describe('Reuse the operationId from a previous response to make a retry idempotent'),
+            bold: z.boolean().optional(),
+            italic: z.boolean().optional(),
+            underline: z.boolean().optional(),
+            fontName: z.string().optional(),
+            fontSize: z.number().positive().max(200).optional(),
+            fontColor: z
+              .string()
+              .regex(/^#[0-9A-Fa-f]{6}$/)
+              .optional(),
+            highlightColor: z.string().optional(),
+            alignment: z.enum(['Left', 'Center', 'Right', 'Justify']).optional(),
+            lineSpacing: z.number().positive().max(10).optional(),
+            spaceAfter: z.number().min(0).max(200).optional(),
+          }),
         },
       ),
     )
