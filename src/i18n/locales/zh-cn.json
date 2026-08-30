@@ -93,7 +93,13 @@
   "failedToResponse": "获取响应失败",
 
   "fetchModels": "获取模型列表",
+  "formatAppliedUnverified": "排版工具已执行，但回读验证未完全通过。实际修改：{changes}",
+  "formatAppliedVerified": "排版已应用并验证通过。实际修改：{changes}",
   "formatApprovalConfirm": "允许对{scope}执行以下排版修改吗？{changes}",
+  "formatPlanGenerated": "排版方案已生成。计划修改：{changes}\n请确认是否执行。",
+  "formatToolFailed": "排版工具执行失败，文档未按要求完成修改。工具实际返回：{error}",
+  "formatToolNotCalled": "未执行排版：模型没有调用必需的 Word 工具，文档未被修改。",
+  "formatToolResult": "排版工具实际返回：{result}",
   "geminiAPIKeyLabel": "API 密钥",
   "geminiAPIKeyPlaceholder": "API 密钥",
   "geminiCustomModelLabel": "自定义模型",

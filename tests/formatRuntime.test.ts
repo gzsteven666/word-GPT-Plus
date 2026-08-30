@@ -87,10 +87,22 @@ try {
   const applyTool = createTaskTools(['apply_format_patch'], undefined, state)[0]
   const applied = JSON.parse(String(await applyTool.invoke({ formatId: proposal.formatId })))
   assert.equal(applied.status, 'applied')
+  assert.deepEqual(applied.changes, { fontSize: 12 })
   assert.equal(applied.verification.verified, true)
   assert.equal(range.font.size, 12)
   assert.equal(ooxmlCalls, 0)
   assert.equal(state.activeFormatRequestId, null)
+
+  const directTool = createTaskTools(['format_document_selection'], { allowedFormatFields: ['fontSize'] }, state)[0]
+  const directResult = JSON.parse(
+    String(await directTool.invoke({ scope: 'selection', fontSize: 14, fontName: 'Arial', bold: true })),
+  )
+  assert.equal(directResult.status, 'applied')
+  assert.deepEqual(directResult.changes, { fontSize: 14 })
+  assert.equal(directResult.verification.verified, true)
+  assert.equal(range.font.size, 14)
+  assert.equal(range.font.name, 'Calibri')
+  assert.equal(range.font.bold, false)
 } finally {
   globalThis.Word = originalWord
 }

@@ -320,7 +320,15 @@ import {
 } from '@/utils/providerProfiles'
 import useSettingForm from '@/utils/settingForm'
 import { settingPreset } from '@/utils/settingPreset'
-import { createTaskTools, createTaskToolState, isConfirmationIntent, TaskToolName } from '@/utils/taskTools'
+import {
+  createTaskTools,
+  createTaskToolState,
+  extractUserInstruction,
+  inferRequestedFormatFields,
+  isConfirmationIntent,
+  resolveFormatToolRoute,
+  TaskToolName,
+} from '@/utils/taskTools'
 import { TextChangeProposal } from '@/utils/textProposal'
 
 const router = useRouter()
@@ -363,43 +371,47 @@ function loadEnabledGeneralTools(): GeneralToolName[] {
 }
 
 function getActiveTools(taskText = '') {
-  const normalized = taskText.toLowerCase()
+  const instruction = extractUserInstruction(taskText)
+  const normalized = instruction.toLowerCase()
   const needsFormat = /格式|排版|美化|字体|字号|行距|对齐|style|format|layout|beautify/i.test(normalized)
   const needsTextEdit = /改写|润色|替换|删除|插入|添加|追加|rewrite|replace|delete|insert|revise|edit text/i.test(
     normalized,
   )
-  const needsWrite = needsFormat || needsTextEdit
-  const needsRead = /读取|查看|阅读|选区|内容|总结|摘要|read|inspect|selected|summarize|summary/i.test(normalized)
+  const needsRead = /读取|查看|阅读|总结|摘要|read|inspect|summarize|summary/i.test(normalized)
   const needsWeb = /网页|网络|搜索|查资料|网址|web|search|url/i.test(normalized)
   const needsGeneral = needsWeb || /计算|日期|calculate|date/i.test(normalized)
   const needsStructure = /全文|整篇|文档|章节|结构|大纲|document|section|outline|structure|review|审阅/i.test(
     normalized,
   )
-
-  // A bare confirmation reply ("是" / "确定" / "ok") carries no task keywords,
-  // so keep the write tools from the previous turn available for continuing.
-  const isConfirmation = isConfirmationIntent(taskText)
+  const isConfirmation = isConfirmationIntent(instruction)
   const hasPendingTextProposal = taskToolState.textProposals.size > 0
   const hasPendingFormatRequest = taskToolState.activeFormatRequestId !== null
+  const isFormattingOnly = needsFormat && !needsTextEdit
+  const formatToolRoute = resolveFormatToolRoute(instruction, hasPendingFormatRequest)
 
   const taskToolNames: TaskToolName[] = []
+  const requiredToolNames: TaskToolName[] = []
 
-  if (needsStructure) taskToolNames.push('read_document_structure')
-  if (needsRead || needsWrite || needsStructure) taskToolNames.push('read_range')
+  if (needsStructure && !isFormattingOnly) taskToolNames.push('read_document_structure')
+  if ((needsRead || needsTextEdit || needsStructure) && !isFormattingOnly) taskToolNames.push('read_range')
   if (needsTextEdit) taskToolNames.push('propose_document_patch', 'apply_document_patch', 'verify_patch')
-  if (needsFormat) {
-    taskToolNames.push('propose_format_patch', 'apply_format_patch')
+
+  // Low-risk formatting is reversible through Word Undo, so execute it in one
+  // verified tool call unless the user explicitly requests a preview.
+  if (formatToolRoute === 'apply_format_patch') {
+    taskToolNames.push(formatToolRoute)
+    requiredToolNames.push(formatToolRoute)
+  } else if (isFormattingOnly && formatToolRoute) {
+    taskToolNames.push(formatToolRoute)
+    requiredToolNames.push(formatToolRoute)
+  } else if (needsFormat) {
+    taskToolNames.push('format_document_selection')
   }
 
-  // Cross-turn continuation: a pending proposal or a confirmation reply keeps
-  // the corresponding apply tools loaded so the agent can finish the task.
-  if (isConfirmation || hasPendingFormatRequest) {
-    taskToolNames.push('propose_format_patch', 'apply_format_patch', 'read_range')
-  }
-  if (isConfirmation || hasPendingTextProposal) {
+  if (isConfirmation && !hasPendingFormatRequest && hasPendingTextProposal) {
     taskToolNames.push('apply_document_patch', 'verify_patch', 'read_range')
   }
-  if (isConfirmation) {
+  if (isConfirmation && !hasPendingFormatRequest) {
     for (const name of lastAgentToolNames.value) {
       if (!taskToolNames.includes(name)) taskToolNames.push(name)
     }
@@ -413,6 +425,7 @@ function getActiveTools(taskText = '') {
     {
       requestTextChangeApproval: requestAgentTextChangeApproval,
       requestSensitiveDataApproval,
+      allowedFormatFields: inferRequestedFormatFields(instruction),
       onTextChangeApplied: change => {
         lastAppliedChange.value = change
       },
@@ -422,7 +435,7 @@ function getActiveTools(taskText = '') {
   const generalTools = createGeneralTools(needsGeneral ? loadEnabledGeneralTools() : [], {
     requestExternalApproval: requestExternalNetworkApproval,
   })
-  return [...generalTools, ...taskTools]
+  return { tools: [...generalTools, ...taskTools], requiredToolNames }
 }
 
 function loadSavedPrompts() {
@@ -762,14 +775,15 @@ You are a highly skilled Microsoft Word Expert Agent. Your goal is to assist use
 - You understand document structure, typography, and professional writing standards.
 
 # Guidelines
-1. **Tool First**: If a request requires document modification or inspection or web search and fetch, you MUST use the available tools. Never claim the environment cannot write or format the document while tools are loaded — the tools are the write path.
-2. **Two-phase flow for anything the user wants to review**: call propose_document_patch or propose_format_patch first, show the returned plan to the user, and wait. Decide from the user's next message whether they confirmed it. When they did, call the matching apply_* tool with the exact proposalId/formatId supplied in the active-proposal context. Do not ask for duplicate confirmation or create a replacement proposal after a clear confirmation.
-3. **Never invent IDs**: use only the proposalId/formatId returned by a previous propose_* call or supplied in the active-proposal context.
-4. **Minimal formatting delta**: include only formatting fields the user explicitly requested. Omit every unspecified field; never reset it to a presumed default, and never claim an unspecified font, color, alignment, spacing, bold, italic, or underline value will be preserved by setting it.
-5. **Formatting units**: 字号 → fontSize in points (12 = 12号); 1.5 倍行距 → lineSpacingMultiple: 1.5; 段后间距 → spaceAfter in points; 两端对齐 → alignment: 'Justified'.
-6. **Accuracy**: Ensure formatting and content changes are precise and follow the user's intent. After applying, report the verification result.
-7. **Conciseness**: Provide brief, helpful explanations of your actions.
-8. **Language**: You must communicate entirely in ${lang}.
+1. **Tool First**: If a request requires document modification or inspection or web search and fetch, you MUST use the available tool. A text-only answer never completes a document action.
+2. **Simple formatting executes immediately**: for a low-risk formatting request, call format_document_selection in the same turn and report its verification. Word Undo provides recovery. Do not ask for confirmation unless the user explicitly requests a preview.
+3. **Explicit preview remains two-phase**: if the user asks to see a plan or wait for confirmation, call propose_format_patch, show only the actual returned changes, and end the turn. On a later confirmation, call apply_format_patch with the exact active formatId. Do not ask twice or create a replacement proposal.
+4. **Never invent IDs or errors**: use only IDs and errors returned by tools. If no tool was called, state that nothing executed; never guess an API, permission, window, or runtime error.
+5. **Minimal formatting delta**: include only formatting fields the user explicitly requested. Omit every unspecified field; never reset it to a presumed default, and never claim an unspecified font, color, alignment, spacing, bold, italic, or underline value will be preserved by setting it.
+6. **Formatting units**: 字号 → fontSize in points (12 = 12号); 1.5 倍行距 → lineSpacingMultiple: 1.5; 段后间距 → spaceAfter in points; 两端对齐 → alignment: 'Justified'.
+7. **Accuracy**: Report completion only from the real tool result and its verification fields.
+8. **Conciseness**: Provide brief, helpful explanations of your actions.
+9. **Language**: You must communicate entirely in ${lang}.
 
 # Safety
 Do not perform destructive actions (like clearing the whole document) unless explicitly instructed.
@@ -777,6 +791,42 @@ Do not perform destructive actions (like clearing the whole document) unless exp
 
 const standardPrompt = (lang: string) =>
   `You are a helpful Microsoft Word specialist. Help users with drafting, brainstorming, and Word-related questions. Reply in ${lang}.`
+
+interface ToolEvidence {
+  name: string
+  result: string
+}
+
+const formatEvidenceMessage = (requiredToolNames: TaskToolName[], evidence: ToolEvidence[]): string | null => {
+  if (requiredToolNames.length === 0) return null
+  const toolResult = evidence.find(item => requiredToolNames.includes(item.name as TaskToolName))
+  if (!toolResult) return t('formatToolNotCalled')
+  if (/^Error:/i.test(toolResult.result)) {
+    return t('formatToolFailed', { error: toolResult.result.replace(/^Error:\s*/i, '') })
+  }
+
+  try {
+    const payload = JSON.parse(toolResult.result) as {
+      status?: string
+      changes?: Record<string, boolean | number | string>
+      verification?: { verified?: boolean }
+    }
+    const changes = payload.changes
+      ? Object.entries(payload.changes)
+          .map(([key, value]) => `${key}=${value}`)
+          .join(', ')
+      : '-'
+    if (toolResult.name === 'propose_format_patch') return t('formatPlanGenerated', { changes })
+    if (payload.status === 'applied' || payload.status === 'already_applied') {
+      return t(payload.verification?.verified === true ? 'formatAppliedVerified' : 'formatAppliedUnverified', {
+        changes,
+      })
+    }
+    return t('formatToolResult', { result: toolResult.result })
+  } catch {
+    return t('formatToolResult', { result: toolResult.result })
+  }
+}
 
 async function processChat(userMessage: HumanMessage, systemMessage?: string) {
   const settings = settingForm.value
@@ -863,7 +913,10 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
   }
 
   const taskText = getMessageText(userMessage)
-  const tools = isAgentMode ? getActiveTools(taskText) : []
+  const activeToolContext = isAgentMode
+    ? getActiveTools(taskText)
+    : { tools: [], requiredToolNames: [] as TaskToolName[] }
+  const toolEvidence: ToolEvidence[] = []
 
   history.value.push(new AIMessage(''))
 
@@ -885,7 +938,8 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
       externalToolNames: ['fetchWebContent', 'searchWeb'],
       maxDurationMs: Math.max(120000, (provider === 'official' ? activeProfile.value?.timeoutMs || 60000 : 60000) * 3),
       messages: finalMessages,
-      tools,
+      tools: activeToolContext.tools,
+      forceToolCall: activeToolContext.requiredToolNames.length > 0,
       errorIssue,
       loading,
       abortSignal: abortController.value?.signal,
@@ -903,7 +957,8 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
         history.value[lastIndex] = new AIMessage(currentContent + `\n\n🔧 Calling tool: ${toolName}...`)
         scrollToBottom()
       },
-      onToolResult: (toolName: string, _result: string) => {
+      onToolResult: (toolName: string, result: string) => {
+        toolEvidence.push({ name: toolName, result })
         // Update with tool result
         const lastIndex = history.value.length - 1
         const currentContent = getMessageText(history.value[lastIndex])
@@ -915,6 +970,9 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
         scrollToBottom()
       },
     })
+
+    const evidenceMessage = formatEvidenceMessage(activeToolContext.requiredToolNames, toolEvidence)
+    if (evidenceMessage) history.value[history.value.length - 1] = new AIMessage(evidenceMessage)
   } else {
     await getChatResponse({
       ...currentConfig,

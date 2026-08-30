@@ -58,6 +58,7 @@ type supportedProviders = 'official' | 'ollama' | 'groq' | 'gemini' | 'azure'
 export interface AgentOptions extends BaseChatCompletionOptions {
   provider: supportedProviders
   tools?: any[]
+  forceToolCall?: boolean
   onToolCall?: (toolName: string, args: any) => void
   onToolResult?: (toolName: string, result: string) => void
   recursionLimit?: number

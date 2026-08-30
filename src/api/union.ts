@@ -4,8 +4,9 @@ import { ChatGroq } from '@langchain/groq'
 // import { MemorySaver } from '@langchain/langgraph'
 import { ChatOllama } from '@langchain/ollama'
 import { AzureChatOpenAI, ChatOpenAI } from '@langchain/openai'
-import { createAgent } from 'langchain'
+import { createAgent, createMiddleware } from 'langchain'
 
+import { resolveAgentToolChoice } from '@/api/agentPolicy'
 import { IndexedDBSaver } from '@/api/checkpoints'
 import { classifyError, safeLog } from '@/api/errors'
 
@@ -79,6 +80,15 @@ const ModelCreators: Record<string, (opts: any) => BaseChatModel> = {
 // const checkpointer = new MemorySaver()
 const checkpointer = new IndexedDBSaver()
 
+const requireFirstToolCallMiddleware = createMiddleware({
+  name: 'require-first-tool-call',
+  wrapModelCall: (request, handler) =>
+    handler({
+      ...request,
+      toolChoice: resolveAgentToolChoice(request.messages),
+    }),
+})
+
 async function executeChatFlow(model: BaseChatModel, options: ProviderOptions): Promise<void> {
   try {
     const stream = await model.stream(options.messages, { signal: options.abortSignal })
@@ -120,6 +130,7 @@ async function executeAgentFlow(model: BaseChatModel, options: AgentOptions): Pr
       model,
       tools: options.tools || [],
       checkpointer,
+      middleware: options.forceToolCall ? [requireFirstToolCallMiddleware] : [],
     })
 
     const stream = await agent.stream(

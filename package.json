@@ -7,7 +7,7 @@
     "dev": "vite --port 3000",
     "build": "vite build",
     "serve": "vite preview --port 3000",
-    "test": "tsx tests/providerProfiles.test.ts && tsx tests/modelCatalog.test.ts && tsx tests/textProposal.test.ts && tsx tests/errors.test.ts && tsx tests/taskTools.test.ts && tsx tests/formatRuntime.test.ts",
+    "test": "tsx tests/providerProfiles.test.ts && tsx tests/modelCatalog.test.ts && tsx tests/textProposal.test.ts && tsx tests/errors.test.ts && tsx tests/taskTools.test.ts && tsx tests/formatRuntime.test.ts && tsx tests/agentPolicy.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

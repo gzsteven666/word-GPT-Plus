@@ -4,7 +4,11 @@ import {
   createTaskTools,
   createTaskToolState,
   extractFormatChanges,
+  extractUserInstruction,
+  inferRequestedFormatFields,
   isConfirmationIntent,
+  isFormatPreviewIntent,
+  resolveFormatToolRoute,
 } from '../src/utils/taskTools.ts'
 
 const readTools = createTaskTools(['read_document_structure', 'read_range'])
@@ -83,6 +87,8 @@ for (const yes of [
   'apply',
   'go ahead',
   '确认',
+  '执行吧',
+  '就按这个方案来',
   '确定\n\n[Selected text: "Some selected text"]',
 ]) {
   assert.equal(isConfirmationIntent(yes), true, `expected confirmation: ${yes}`)
@@ -90,5 +96,22 @@ for (const yes of [
 for (const no of ['请改写这段文字', '把第一段设置成12号字体', '查一下最新消息', '帮我总结一下', '', '  ']) {
   assert.equal(isConfirmationIntent(no), false, `expected non-confirmation: ${no}`)
 }
+
+assert.equal(extractUserInstruction('执行吧\n\n[Selected text: "Some selected text"]'), '执行吧')
+assert.equal(isFormatPreviewIntent('设置为12号字体'), false)
+assert.equal(isFormatPreviewIntent('设置为12号字体，先显示方案，等待我确认后再执行'), true)
+assert.equal(isFormatPreviewIntent('Set the font to 12pt and show a preview before applying'), true)
+assert.equal(resolveFormatToolRoute('设置为12号字体', false), 'format_document_selection')
+assert.equal(resolveFormatToolRoute('设置为12号字体，先显示方案，等待我确认后再执行', false), 'propose_format_patch')
+assert.equal(resolveFormatToolRoute('执行吧\n\n[Selected text: "influence"]', true), 'apply_format_patch')
+assert.equal(resolveFormatToolRoute('具体是什么错误', true), null)
+assert.deepEqual(inferRequestedFormatFields('设置为12号字体'), ['fontSize'])
+assert.deepEqual(inferRequestedFormatFields('设置为12号字体、1.5倍行距、段后6磅、两端对齐'), [
+  'fontSize',
+  'alignment',
+  'lineSpacing',
+  'lineSpacingMultiple',
+  'spaceAfter',
+])
 
 console.log('taskTools tests: PASS')

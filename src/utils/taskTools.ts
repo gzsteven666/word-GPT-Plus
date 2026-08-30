@@ -55,20 +55,65 @@ export const createTaskToolState = (): TaskToolState => ({
 
 export interface TaskToolSecurity {
   requestTextChangeApproval?: (proposal: TextChangeProposal) => Promise<boolean>
-  requestFormatApproval?: (request: FormatRequest) => Promise<boolean>
   requestSensitiveDataApproval?: (scope: string) => Promise<boolean>
   onTextChangeApplied?: (change: AppliedTextChange) => void
+  allowedFormatFields?: string[]
+}
+
+export const extractUserInstruction = (text: string): string => {
+  const selectionMarker = '\n\n[Selected text: "'
+  const markerIndex = text.indexOf(selectionMarker)
+  return (markerIndex >= 0 ? text.slice(0, markerIndex) : text).trim()
+}
+
+export const isFormatPreviewIntent = (text: string): boolean => {
+  const instruction = extractUserInstruction(text)
+  return /先.{0,20}(?:方案|预览)|(?:等待|等我).{0,12}(?:确认|同意)|确认后再|(?:show|display).{0,20}(?:plan|preview).{0,20}(?:first|before)|wait.{0,12}(?:confirm|approval)|preview.{0,20}before.{0,12}(?:apply|execut)/i.test(
+    instruction,
+  )
 }
 
 /**
- * Detect a short confirmation/continuation reply (是/好/确定/执行/yes/ok/...).
- * Such replies carry no task keywords of their own, so the agent needs the
- * write tools from the previous turn to stay available.
+ * Detect a short confirmation/continuation reply. This only controls which
+ * tool is made available or required; it never performs the write itself.
  */
 export const isConfirmationIntent = (text: string): boolean =>
-  /^(是|好|好的|确定|确认|可以|执行|应用|继续|同意|没问题|选中了|已选中|完成|yes|ok|okay|confirm|apply|proceed|go ahead|sure|selected|done|accept|fine)[！!。.，,\s]*(?:\n\n\[Selected text: "[\s\S]*"\])?$/i.test(
-    text.trim(),
+  /^(?:(?:是|好|好的|确定|确认|可以|执行|应用|继续|同意|没问题|选中了|已选中|完成)(?:吧|了|啦|即可|就行|好了)?|就按(?:这个|该)?方案(?:来|执行)?|按这个来|照此执行|yes|ok|okay|confirm|apply|proceed|go ahead|sure|selected|done|accept|fine)[！!。.，,\s]*$/i.test(
+    extractUserInstruction(text),
   )
+
+export type FormatToolRoute = 'propose_format_patch' | 'apply_format_patch' | 'format_document_selection'
+
+export const inferRequestedFormatFields = (text: string): string[] => {
+  const instruction = extractUserInstruction(text)
+  const fields = new Set<string>()
+  if (/字号|号字体|\d+(?:\.\d+)?\s*(?:磅|pt\b)|font\s*size/i.test(instruction)) fields.add('fontSize')
+  if (
+    /宋体|微软雅黑|黑体|仿宋|楷体|calibri|arial|times new roman|font\s*family|字体.{0,6}(?:改|设|设置|更换)?为(?!\s*\d)/i.test(
+      instruction,
+    )
+  )
+    fields.add('fontName')
+  if (/粗体|加粗|\bbold\b/i.test(instruction)) fields.add('bold')
+  if (/斜体|\bitalic/i.test(instruction)) fields.add('italic')
+  if (/下划线|underline/i.test(instruction)) fields.add('underline')
+  if (/字体颜色|字色|font\s*color/i.test(instruction)) fields.add('fontColor')
+  if (/高亮|highlight/i.test(instruction)) fields.add('highlightColor')
+  if (/对齐|align/i.test(instruction)) fields.add('alignment')
+  if (/行距|line\s*spacing/i.test(instruction)) {
+    fields.add('lineSpacing')
+    fields.add('lineSpacingMultiple')
+  }
+  if (/段后|space\s*after/i.test(instruction)) fields.add('spaceAfter')
+  return [...fields]
+}
+
+export const resolveFormatToolRoute = (text: string, hasActiveProposal: boolean): FormatToolRoute | null => {
+  const instruction = extractUserInstruction(text)
+  if (hasActiveProposal && isConfirmationIntent(instruction)) return 'apply_format_patch'
+  if (!/格式|排版|美化|字体|字号|行距|对齐|style|format|layout|beautify/i.test(instruction)) return null
+  return isFormatPreviewIntent(instruction) ? 'propose_format_patch' : 'format_document_selection'
+}
 
 const proposalSummary = (proposal: TextChangeProposal) =>
   JSON.stringify({
@@ -122,6 +167,15 @@ export const extractFormatChanges = (args: Record<string, unknown>): Record<stri
       ([key, value]) => !['scope', 'operationId', 'formatId'].includes(key) && value !== undefined,
     ),
   ) as Record<string, boolean | number | string>
+
+const restrictFormatChanges = (
+  changes: Record<string, boolean | number | string>,
+  allowedFields?: string[],
+): Record<string, boolean | number | string> => {
+  if (!allowedFields?.length) return changes
+  const allowed = new Set(allowedFields)
+  return Object.fromEntries(Object.entries(changes).filter(([key]) => allowed.has(key)))
+}
 
 const applyFormatRequest = async (request: FormatRequest): Promise<void> => {
   const changes = request.changes
@@ -414,7 +468,7 @@ export const createTaskTools = (
       tool(
         async input => {
           const args = input as Record<string, unknown> & { scope?: 'selection' | 'document' }
-          const changes = extractFormatChanges(args)
+          const changes = restrictFormatChanges(extractFormatChanges(args), security?.allowedFormatFields)
           if (Object.keys(changes).length === 0) {
             throw new AppError('REQUEST_FAILED', 'At least one formatting change is required')
           }
@@ -484,7 +538,13 @@ export const createTaskTools = (
           state.formatRequests.delete(request.id)
           state.activeFormatRequestId = null
           const verification = await verifyFormatRequest(request)
-          return JSON.stringify({ formatId: request.id, status: 'applied', verification })
+          return JSON.stringify({
+            formatId: request.id,
+            status: 'applied',
+            scope: request.scope,
+            changes: request.changes,
+            verification,
+          })
         },
         {
           name: 'apply_format_patch',
@@ -501,12 +561,20 @@ export const createTaskTools = (
       tool(
         async input => {
           const args = input as Record<string, unknown> & { scope?: 'selection' | 'document'; operationId?: string }
-          const changes = extractFormatChanges(args)
+          const changes = restrictFormatChanges(extractFormatChanges(args), security?.allowedFormatFields)
           if (Object.keys(changes).length === 0) {
             throw new AppError('REQUEST_FAILED', 'At least one formatting change is required')
           }
           if (args.operationId && state.appliedFormatRequests.has(args.operationId)) {
-            return JSON.stringify({ operationId: args.operationId, status: 'already_applied', idempotent: true })
+            const applied = state.appliedFormatRequests.get(args.operationId)!
+            return JSON.stringify({
+              operationId: args.operationId,
+              status: 'already_applied',
+              idempotent: true,
+              scope: applied.scope,
+              changes: applied.changes,
+              verification: await verifyFormatRequest(applied),
+            })
           }
           const scope = (args.scope || 'selection') as 'selection' | 'document'
           const beforeHash = await readCurrentHash(scope)
@@ -516,12 +584,6 @@ export const createTaskTools = (
             changes,
             beforeHash,
           }
-          if (!security?.requestFormatApproval) {
-            throw new AppError('REQUEST_FAILED', 'A user approval handler is required before applying formatting')
-          }
-          if (!(await security.requestFormatApproval(request))) {
-            return JSON.stringify({ operationId: request.id, status: 'cancelled' })
-          }
           const currentHash = await readCurrentHash(request.scope)
           if (currentHash !== request.beforeHash) {
             throw new AppError('DOCUMENT_CONFLICT', 'The document changed while formatting was awaiting approval')
@@ -529,13 +591,21 @@ export const createTaskTools = (
 
           await applyFormatRequest(request)
           state.appliedFormatRequests.set(request.id, request)
+          if (state.activeFormatRequestId) state.formatRequests.delete(state.activeFormatRequestId)
+          state.activeFormatRequestId = null
           const verification = await verifyFormatRequest(request)
-          return JSON.stringify({ operationId: request.id, status: 'applied', verification })
+          return JSON.stringify({
+            operationId: request.id,
+            status: 'applied',
+            scope: request.scope,
+            changes: request.changes,
+            verification,
+          })
         },
         {
           name: 'format_document_selection',
           description:
-            'Apply explicit, user-approved formatting to the current selection or the whole document in a single step (shows an approval dialog). This changes styles only and never changes text content. Prefer propose_format_patch + apply_format_patch when the user wants to review the plan first.',
+            'Immediately apply low-risk, reversible formatting to the current selection or whole document, then verify it. Include only fields explicitly requested by the user. Use propose_format_patch instead when the user explicitly asks to preview a plan or wait for confirmation.',
           schema: z.object({
             operationId: z
               .string()
