@@ -28,7 +28,9 @@ English | [简体中文](https://github.com/Kuingsmile/word-GPT-Plus/blob/master
 
 ## 📋 Introduction
 
-Word GPT Plus seamlessly integrates AI and Agent directly into Microsoft Word, allowing you to generate, translate, summarize, and polish text directly within your documents. Enhance your writing workflow without leaving your Word environment.
+Word GPT Plus seamlessly integrates AI and Agent directly into Microsoft Word, allowing you to generate, translate,
+summarize, and polish text directly within your documents. Enhance your writing workflow without leaving your Word
+environment.
 
 ![Image](https://github.com/user-attachments/assets/e5b077ca-b8d4-4e28-97c7-b708524e1188)
 
@@ -44,7 +46,8 @@ Word GPT Plus seamlessly integrates AI and Agent directly into Microsoft Word, a
 
 - **Intelligent Agent Mode** (Powered by LangChain):
   - **Direct Word Document Manipulation**: Agent can read, write, and modify your Word documents
-  - **Multiple Built-in Word Tools**: Web search, Insert text, format content, create tables, manage bookmarks, search and replace, and more
+  - **Multiple Built-in Word Tools**: Web search, Insert text, format content, create tables, manage bookmarks, search
+    and replace, and more
   - Multi-step reasoning with conversation memory
   - Streaming responses with real-time updates
   - Thought process visualization with collapsible details
@@ -104,17 +107,64 @@ Choose the method that best suits your needs:
 
 ### Method 1: Instant Use (Recommended)
 
-*Best for most users. No coding required.*
+_Best for most users. No coding required._
 
-1. Download `release/instant-use/manifest.xml` [manifest.xml](https://github.com/Kuingsmile/word-GPT-Plus/blob/master/release/instant-use/manifest.xml).
-2. Save it to a dedicated folder on your computer (e.g., `C:\Users\username\Documents\WordGPT`).
-3. Proceed to the [Add-in Installation Guide](#add-in-installation-guide).
+#### Windows
 
-> **Note for users in China**: If you experience connectivity issues, try adding `msq.pub` to your proxy rules or use the self-hosted option.
+1. Download `release/instant-use/manifest.xml`
+   [manifest.xml](https://github.com/gzsteven666/word-GPT-Plus/blob/master/release/instant-use/manifest.xml).
+2. Save it to a dedicated folder on your computer.
+3. Follow the [Windows Add-in Installation Guide](#windows-add-in-sideloading).
+
+#### macOS one-click installation
+
+For Microsoft Word for Mac desktop. The script only installs the manifest for your current user, does not require
+`sudo`, and does not upload or read your API key.
+
+1. Open Microsoft Word once, save your documents, and quit it completely with `Command + Q`.
+2. Open Terminal and run:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/gzsteven666/word-GPT-Plus/master/scripts/install-macos.sh -o /tmp/install-word-gpt.sh
+   bash /tmp/install-word-gpt.sh
+   ```
+
+3. Reopen Word and open a `.docx` document.
+4. Select **Home → Add-ins → GPT Plus Steven**.
+5. Configure your AI provider and API key in the add-in settings.
+
+Run the same commands again to update the add-in. If Word was running during installation, quit it completely and reopen
+it.
+
+> **If the add-in is not visible**: confirm the manifest exists in
+> `~/Library/Containers/com.microsoft.Word/Data/Documents/wef/`, then fully restart Word. If the cache is stale, run
+> `npx office-addin-cache clear` and restart Word again.
+
+#### Manual macOS installation
+
+1. Download the personal
+   [manifest.xml](https://raw.githubusercontent.com/gzsteven666/word-GPT-Plus/master/release/instant-use/manifest.xml).
+2. In Finder, press `Command + Shift + G` and open: `~/Library/Containers/com.microsoft.Word/Data/Documents/wef`
+3. Create the `wef` folder if it does not exist.
+4. Copy the manifest there and rename it to `GPT-Plus-Steven.xml`.
+5. Fully restart Word, open a `.docx` document, and select **Home → Add-ins → GPT Plus Steven**.
+
+#### Uninstall on macOS
+
+Quit Word, then run in Terminal:
+
+```bash
+rm -f "$HOME/Library/Containers/com.microsoft.Word/Data/Documents/wef/GPT-Plus-Steven.xml"
+```
+
+If no longer needed, you may also remove `GPT-Plus-Steven.xml.backup` from the same folder.
+
+> **Note for users in China**: If you experience connectivity issues, try adding `msq.pub` to your proxy rules or use
+> the self-hosted option.
 
 ### Method 2: Self-Hosted (Advanced)
 
-*For developers or those requiring a private backend.*
+_For developers or those requiring a private backend._
 
 <details>
 <summary><strong>Docker Deployment</strong></summary>
@@ -135,7 +185,7 @@ Choose the method that best suits your needs:
 <details>
 <summary><strong>Build from Source</strong></summary>
 
-*Requires Node.js 20+*
+_Requires Node.js 20+_
 
 1. Clone and start the project:
 
@@ -147,7 +197,8 @@ Choose the method that best suits your needs:
    yarn run serve
    ```
 
-2. Use the [self-hosted manifest.xml](https://github.com/Kuingsmile/word-GPT-Plus/blob/master/release/self-hosted/manifest.xml).
+2. Use the
+   [self-hosted manifest.xml](https://github.com/Kuingsmile/word-GPT-Plus/blob/master/release/self-hosted/manifest.xml).
 3. Proceed to the [Add-in Installation Guide](#add-in-installation-guide).
 
 </details>
@@ -163,30 +214,36 @@ Choose the method that best suits your needs:
 
 To get started with Word GPT Plus, you will need to sideload the add-in into Microsoft Word.
 
-You can find instructions provided by MicroSoft at the following link: [sideload office add-ins](https://learn.microsoft.com/en-us/office/dev/add-ins/testing/create-a-network-shared-folder-catalog-for-task-pane-and-content-add-ins)
+### Windows Add-in Sideloading
+
+You can find instructions provided by Microsoft at the following link:
+[sideload Office add-ins](https://learn.microsoft.com/en-us/office/dev/add-ins/testing/create-a-network-shared-folder-catalog-for-task-pane-and-content-add-ins)
 
 1. Go to the folder where you saved the `manifest.xml` file, for example `C:\Users\username\Documents\WordGPT`.
 2. Open the context menu for the folder(right-click the folder) and select **Properties**.
 3. Within the **Properties** dialog box, select the **Sharing** tab, and then select **Share**.
-![image](https://learn.microsoft.com/en-us/office/dev/add-ins/images/sideload-windows-properties-dialog.png)
-4. Within the **Network access** dialog box, add yourself and any other users you want to share, choose the **Share** button, When you see confirmation that Your folder is shared, note the **full network path** that's displayed immediately following the folder name.
-![image](https://learn.microsoft.com/en-us/office/dev/add-ins/images/sideload-windows-network-access-dialog.png)
+   ![image](https://learn.microsoft.com/en-us/office/dev/add-ins/images/sideload-windows-properties-dialog.png)
+4. Within the **Network access** dialog box, add yourself and any other users you want to share, choose the **Share**
+   button, When you see confirmation that Your folder is shared, note the **full network path** that's displayed
+   immediately following the folder name.
+   ![image](https://learn.microsoft.com/en-us/office/dev/add-ins/images/sideload-windows-network-access-dialog.png)
 5. Open a new document in Word, choose the **File** tab, and then choose **Options**.
 6. Choose **Trust Center**, and then choose the **Trust Center Settings** button.
 7. Choose **Trusted Add-in Catalogs**.
 8. In the **Catalog Url** box, enter the **full network path** and then choose **Add Catalog**.
 9. Select the **Show in Menu** check box, and then choose **OK**.
-![image](https://learn.microsoft.com/en-us/office/dev/add-ins/images/sideload-windows-trust-center-dialog.png)
+   ![image](https://learn.microsoft.com/en-us/office/dev/add-ins/images/sideload-windows-trust-center-dialog.png)
 10. Close and then restart Word.
 11. Click **Insert** > **My Add-ins** > **Shared Folder**, choose **GPT Plus**, and then choose **Add**.
 12. Enjoy it!
-![image](https://user-images.githubusercontent.com/96409857/234744280-9d9f13cf-536b-4fb5-adfa-cbec262d56a2.png)
+    ![image](https://user-images.githubusercontent.com/96409857/234744280-9d9f13cf-536b-4fb5-adfa-cbec262d56a2.png)
 
 ## 📖 Usage
 
 ### Getting Started
 
-After entering Word GPT Plus, click the `Settings` button on the homepage to configure your preferred AI provider and API key.
+After entering Word GPT Plus, click the `Settings` button on the homepage to configure your preferred AI provider and
+API key.
 
 ### Modes
 
@@ -264,8 +321,10 @@ For each AI provider, you can add custom models:
 
 ## 🔒 Privacy & Security
 
-- **Local Storage**: Your API keys and custom prompts are stored in browser local storage (within the Word add-in environment). They are never sent to our servers.
-- **Direct Connection**: The add-in communicates directly with AI providers (OpenAI, Azure, etc.) or your local Ollama instance. There are no intermediary servers handling your data unless you use a custom proxy.
+- **Local Storage**: Your API keys and custom prompts are stored in browser local storage (within the Word add-in
+  environment). They are never sent to our servers.
+- **Direct Connection**: The add-in communicates directly with AI providers (OpenAI, Azure, etc.) or your local Ollama
+  instance. There are no intermediary servers handling your data unless you use a custom proxy.
 
 ## Contributing
 
