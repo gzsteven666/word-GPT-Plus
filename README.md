@@ -24,7 +24,7 @@
   </p>
 </div>
 
-English | [简体中文](https://github.com/Kuingsmile/word-GPT-Plus/blob/master/README_cn.md)
+English | [简体中文](https://github.com/gzsteven666/word-GPT-Plus/blob/master/README_cn.md)
 
 ## 📋 Introduction
 
