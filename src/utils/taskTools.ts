@@ -6,7 +6,9 @@ import {
   AppliedTextChange,
   applyTextChangeProposal,
   makeSelectionProposal,
+  readSelectionInspection,
   readSelectionSnapshot,
+  readSelectionTextSnapshot,
   restoreTextChange,
   verifyTextChange,
 } from '@/api/safeEdit'
@@ -108,7 +110,7 @@ const readDocumentHash = async (): Promise<string> =>
   })
 
 const readCurrentHash = async (scope: FormatRequest['scope']): Promise<string> =>
-  scope === 'selection' ? (await readSelectionSnapshot()).hash : readDocumentHash()
+  scope === 'selection' ? (await readSelectionTextSnapshot()).hash : readDocumentHash()
 
 /**
  * Extract the formatting-change map from tool arguments, dropping control
@@ -296,17 +298,19 @@ export const createTaskTools = (
     tools.push(
       tool(
         async () => {
-          const snapshot = await readSelectionSnapshot()
+          const snapshot = await readSelectionInspection()
           return JSON.stringify({
             text: snapshot.text,
             hash: snapshot.hash,
             protectedObjects: snapshot.protectedObjects,
+            protectedObjectsAvailable: snapshot.protectedObjectsAvailable,
+            warning: snapshot.warning,
           })
         },
         {
           name: 'read_range',
           description:
-            'Read the currently selected Word range, its content hash, and protected-object markers. This is read-only.',
+            'Read the currently selected Word range and content hash. Protected-object markers are included when Word can provide OOXML; check protectedObjectsAvailable before relying on them. This is read-only.',
           schema: z.object({}),
         },
       ),
@@ -438,7 +442,7 @@ export const createTaskTools = (
         {
           name: 'propose_format_patch',
           description:
-            'Create a reviewable formatting plan for the current selection or the whole document. This never writes to the document and never shows a dialog. Present the plan to the user, then call apply_format_patch after the user confirms.',
+            'Create a reviewable formatting plan for the current selection or the whole document. Include only fields explicitly requested by the user and omit all unspecified fields. This never writes to the document and never shows a dialog. Present the plan, end the turn, then call apply_format_patch only if a later user message confirms it.',
           schema: z.object(formatFieldsSchema),
         },
       ),
@@ -468,15 +472,6 @@ export const createTaskTools = (
               'The format proposal was not found, is no longer active, or has expired',
             )
           }
-          if (!security?.requestFormatApproval) {
-            throw new AppError('REQUEST_FAILED', 'A user approval handler is required before applying formatting')
-          }
-          if (!(await security.requestFormatApproval(request))) {
-            state.formatRequests.delete(request.id)
-            state.activeFormatRequestId = null
-            return JSON.stringify({ formatId: request.id, status: 'cancelled' })
-          }
-
           const currentHash = await readCurrentHash(request.scope)
           if (currentHash !== request.beforeHash) {
             state.formatRequests.delete(request.id)
@@ -494,7 +489,7 @@ export const createTaskTools = (
         {
           name: 'apply_format_patch',
           description:
-            'Apply a previously proposed formatting plan only after explicit user approval. The operation is guarded by the original content hash and format ID, then verifies the result was applied.',
+            'Apply the active formatting plan after you determine from the user message that they confirmed it. The operation is guarded by the active format ID and original content hash, then verifies the result. Do not call this in the proposal turn.',
           schema: z.object({ formatId: z.string().describe('The formatId returned by propose_format_patch') }),
         },
       ),

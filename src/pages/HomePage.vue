@@ -320,13 +320,7 @@ import {
 } from '@/utils/providerProfiles'
 import useSettingForm from '@/utils/settingForm'
 import { settingPreset } from '@/utils/settingPreset'
-import {
-  createTaskTools,
-  createTaskToolState,
-  FormatRequest,
-  isConfirmationIntent,
-  TaskToolName,
-} from '@/utils/taskTools'
+import { createTaskTools, createTaskToolState, isConfirmationIntent, TaskToolName } from '@/utils/taskTools'
 import { TextChangeProposal } from '@/utils/textProposal'
 
 const router = useRouter()
@@ -394,7 +388,7 @@ function getActiveTools(taskText = '') {
   if (needsRead || needsWrite || needsStructure) taskToolNames.push('read_range')
   if (needsTextEdit) taskToolNames.push('propose_document_patch', 'apply_document_patch', 'verify_patch')
   if (needsFormat) {
-    taskToolNames.push('propose_format_patch', 'apply_format_patch', 'format_document_selection')
+    taskToolNames.push('propose_format_patch', 'apply_format_patch')
   }
 
   // Cross-turn continuation: a pending proposal or a confirmation reply keeps
@@ -418,7 +412,6 @@ function getActiveTools(taskText = '') {
     deduped,
     {
       requestTextChangeApproval: requestAgentTextChangeApproval,
-      requestFormatApproval,
       requestSensitiveDataApproval,
       onTextChangeApplied: change => {
         lastAppliedChange.value = change
@@ -772,10 +765,11 @@ You are a highly skilled Microsoft Word Expert Agent. Your goal is to assist use
 1. **Tool First**: If a request requires document modification or inspection or web search and fetch, you MUST use the available tools. Never claim the environment cannot write or format the document while tools are loaded — the tools are the write path.
 2. **Two-phase flow for anything the user wants to review**: call propose_document_patch or propose_format_patch first, show the returned plan to the user, and wait. Decide from the user's next message whether they confirmed it. When they did, call the matching apply_* tool with the exact proposalId/formatId supplied in the active-proposal context. Do not ask for duplicate confirmation or create a replacement proposal after a clear confirmation.
 3. **Never invent IDs**: use only the proposalId/formatId returned by a previous propose_* call or supplied in the active-proposal context.
-4. **Formatting units**: 字号 → fontSize in points (12 = 12号); 1.5 倍行距 → lineSpacingMultiple: 1.5; 段后间距 → spaceAfter in points; 两端对齐 → alignment: 'Justified'.
-5. **Accuracy**: Ensure formatting and content changes are precise and follow the user's intent. After applying, report the verification result.
-6. **Conciseness**: Provide brief, helpful explanations of your actions.
-7. **Language**: You must communicate entirely in ${lang}.
+4. **Minimal formatting delta**: include only formatting fields the user explicitly requested. Omit every unspecified field; never reset it to a presumed default, and never claim an unspecified font, color, alignment, spacing, bold, italic, or underline value will be preserved by setting it.
+5. **Formatting units**: 字号 → fontSize in points (12 = 12号); 1.5 倍行距 → lineSpacingMultiple: 1.5; 段后间距 → spaceAfter in points; 两端对齐 → alignment: 'Justified'.
+6. **Accuracy**: Ensure formatting and content changes are precise and follow the user's intent. After applying, report the verification result.
+7. **Conciseness**: Provide brief, helpful explanations of your actions.
+8. **Language**: You must communicate entirely in ${lang}.
 
 # Safety
 Do not perform destructive actions (like clearing the whole document) unless explicitly instructed.
@@ -1008,13 +1002,6 @@ const requestExternalNetworkApproval = async (toolName: GeneralToolName, args: u
 }
 
 const requestSensitiveDataApproval = async (scope: string) => window.confirm(t('documentDataConfirm', { scope }))
-
-const requestFormatApproval = async (request: FormatRequest) => {
-  const changes = Object.entries(request.changes)
-    .map(([key, value]) => `${key}=${value}`)
-    .join(', ')
-  return window.confirm(t('formatApprovalConfirm', { scope: request.scope, changes }))
-}
 
 const restoreLastEdit = async () => {
   if (!lastAppliedChange.value) return

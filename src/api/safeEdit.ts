@@ -1,11 +1,19 @@
 import { AppError } from '@/api/errors'
 import { createTextChangeProposal, hashText, TextChangeProposal } from '@/utils/textProposal'
 
-export interface SelectionSnapshot {
+export interface SelectionTextSnapshot {
   text: string
-  ooxml: string
   hash: string
+}
+
+export interface SelectionSnapshot extends SelectionTextSnapshot {
+  ooxml: string
   protectedObjects: string[]
+}
+
+export interface SelectionInspection extends SelectionSnapshot {
+  protectedObjectsAvailable: boolean
+  warning?: string
 }
 
 export interface AppliedTextChange {
@@ -26,6 +34,15 @@ const protectedObjectNames = (ooxml: string): string[] => {
   return rules.filter(([, rule]) => rule.test(ooxml)).map(([name]) => name)
 }
 
+export const readSelectionTextSnapshot = async (): Promise<SelectionTextSnapshot> =>
+  Word.run(async context => {
+    const range = context.document.getSelection()
+    range.load('text')
+    await context.sync()
+    const text = range.text || ''
+    return { text, hash: hashText(text) }
+  })
+
 export const readSelectionSnapshot = async (): Promise<SelectionSnapshot> =>
   Word.run(async context => {
     const range = context.document.getSelection()
@@ -40,6 +57,28 @@ export const readSelectionSnapshot = async (): Promise<SelectionSnapshot> =>
       protectedObjects: protectedObjectNames(ooxmlText),
     }
   })
+
+/**
+ * Read-only inspection should remain usable when Word cannot serialize a
+ * selection that crosses a page/section boundary. Text-changing operations
+ * continue to use the strict OOXML snapshot above so object protection is not
+ * silently weakened.
+ */
+export const readSelectionInspection = async (): Promise<SelectionInspection> => {
+  try {
+    const snapshot = await readSelectionSnapshot()
+    return { ...snapshot, protectedObjectsAvailable: true }
+  } catch {
+    const snapshot = await readSelectionTextSnapshot()
+    return {
+      ...snapshot,
+      ooxml: '',
+      protectedObjects: [],
+      protectedObjectsAvailable: false,
+      warning: 'Word could not inspect non-text objects for this selection; text reading still succeeded.',
+    }
+  }
+}
 
 export const makeSelectionProposal = async (
   afterText: string,
