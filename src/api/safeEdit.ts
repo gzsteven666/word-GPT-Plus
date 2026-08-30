@@ -72,6 +72,23 @@ export const applyTextChangeProposal = async (proposal: TextChangeProposal): Pro
   }
 
   return Word.run(async context => {
+    const bookmarkTag = `wordgpt_${proposal.id.replaceAll('-', '')}`
+    const existingControls = context.document.contentControls
+    existingControls.load('items/tag')
+    await context.sync()
+    const existing = existingControls.items.find(item => item.tag === bookmarkTag)
+    if (existing) {
+      const existingRange = existing.getRange('Content')
+      existingRange.load('text')
+      await context.sync()
+      proposal.status = 'applied'
+      return {
+        proposal,
+        bookmarkTag,
+        appliedHash: hashText(existingRange.text || proposal.afterText),
+      }
+    }
+
     const range = context.document.getSelection()
     const ooxml = range.getOoxml()
     range.load('text')
@@ -87,7 +104,6 @@ export const applyTextChangeProposal = async (proposal: TextChangeProposal): Pro
       throw new AppError('NON_TEXT_OBJECTS', `The selection contains protected objects: ${currentObjects.join(', ')}`)
     }
 
-    const bookmarkTag = `wordgpt_${proposal.id.replaceAll('-', '')}`
     const control = range.insertContentControl()
     control.tag = bookmarkTag
     control.title = 'Word GPT edit'
@@ -105,6 +121,27 @@ export const applyTextChangeProposal = async (proposal: TextChangeProposal): Pro
     }
   })
 }
+
+export const verifyTextChange = async (
+  change: AppliedTextChange,
+): Promise<{ status: 'verified' | 'changed'; currentHash?: string }> =>
+  Word.run(async context => {
+    const controls = context.document.contentControls
+    controls.load('items/tag')
+    await context.sync()
+
+    const control = controls.items.find(item => item.tag === change.bookmarkTag)
+    if (!control) throw new AppError('DOCUMENT_CONFLICT', 'The patch anchor is no longer available')
+
+    const contentRange = control.getRange('Content')
+    contentRange.load('text')
+    await context.sync()
+    const currentHash = hashText(contentRange.text || '')
+    return {
+      status: currentHash === change.appliedHash ? 'verified' : 'changed',
+      currentHash,
+    }
+  })
 
 export const restoreTextChange = async (change: AppliedTextChange): Promise<TextChangeProposal> =>
   Word.run(async context => {

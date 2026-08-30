@@ -10,6 +10,10 @@ export interface GeneralToolDefinition {
   tool: DynamicStructuredTool
 }
 
+export interface GeneralToolSecurity {
+  requestExternalApproval?: (toolName: GeneralToolName, args: unknown) => Promise<boolean>
+}
+
 const fetchWebContentTool = new DynamicStructuredTool({
   name: 'fetchWebContent',
   description:
@@ -167,9 +171,33 @@ export const generalToolDefinitions: GeneralToolDefinition[] = [
   },
 ]
 
-export function createGeneralTools(enabledTools?: GeneralToolName[]): DynamicStructuredTool[] {
-  if (!enabledTools) return generalToolDefinitions.map(def => def.tool)
-  return generalToolDefinitions.filter(def => enabledTools.includes(def.name)).map(def => def.tool)
+export function createGeneralTools(
+  enabledTools?: GeneralToolName[],
+  security?: GeneralToolSecurity,
+): DynamicStructuredTool[] {
+  const selected = enabledTools
+    ? generalToolDefinitions.filter(def => enabledTools.includes(def.name))
+    : generalToolDefinitions
+
+  const requestExternalApproval = security?.requestExternalApproval
+  if (!requestExternalApproval) return selected.map(def => def.tool)
+
+  return selected.map(
+    def =>
+      new DynamicStructuredTool({
+        name: def.tool.name,
+        description: def.tool.description,
+        schema: def.tool.schema,
+        func: async input => {
+          if (['fetchWebContent', 'searchWeb'].includes(def.name)) {
+            const approved = await requestExternalApproval(def.name, input)
+            if (!approved) return 'The user did not authorize this external network request.'
+          }
+          const result = await def.tool.invoke(input)
+          return typeof result === 'string' ? result : JSON.stringify(result)
+        },
+      }),
+  )
 }
 
 export function getGeneralToolDefinitions(): GeneralToolDefinition[] {

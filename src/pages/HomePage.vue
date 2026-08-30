@@ -320,8 +320,8 @@ import {
 } from '@/utils/providerProfiles'
 import useSettingForm from '@/utils/settingForm'
 import { settingPreset } from '@/utils/settingPreset'
+import { createTaskTools, TaskToolName } from '@/utils/taskTools'
 import { TextChangeProposal } from '@/utils/textProposal'
-import { createWordTools, WordToolName } from '@/utils/wordTools'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -341,93 +341,51 @@ const savedPrompts = ref<SavedPrompt[]>([])
 const selectedPromptId = ref<string>('')
 const customSystemPrompt = ref<string>('')
 
-const allWordToolNames: WordToolName[] = [
-  'getSelectedText',
-  'getDocumentContent',
-  'insertText',
-  'replaceSelectedText',
-  'appendText',
-  'insertParagraph',
-  'formatText',
-  'searchAndReplace',
-  'getDocumentProperties',
-  'insertTable',
-  'insertList',
-  'deleteText',
-  'clearFormatting',
-  'setFontName',
-  'insertPageBreak',
-  'getRangeInfo',
-  'selectText',
-  'insertImage',
-  'getTableInfo',
-  'insertBookmark',
-  'goToBookmark',
-  'insertContentControl',
-  'findText',
-]
-
 const allGeneralToolNames: GeneralToolName[] = ['fetchWebContent', 'searchWeb', 'getCurrentDate', 'calculateMath']
-
-// Tool state
-const enabledWordTools = ref<WordToolName[]>(loadEnabledWordTools())
-const enabledGeneralTools = ref<GeneralToolName[]>(loadEnabledGeneralTools())
-
-function loadEnabledWordTools(): WordToolName[] {
-  const stored = localStorage.getItem('enabledWordTools')
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored)
-      return parsed.filter((name: string) => allWordToolNames.includes(name as WordToolName))
-    } catch {
-      return [...allWordToolNames]
-    }
-  }
-  return [...allWordToolNames]
-}
 
 function loadEnabledGeneralTools(): GeneralToolName[] {
   const stored = localStorage.getItem('enabledGeneralTools')
   if (stored) {
     try {
       const parsed = JSON.parse(stored)
-      return parsed.filter((name: string) => allGeneralToolNames.includes(name as GeneralToolName))
+      if (Array.isArray(parsed))
+        return parsed.filter((name: string) => allGeneralToolNames.includes(name as GeneralToolName))
     } catch {
-      return [...allGeneralToolNames]
+      // Fall back to all general tools when the saved setting is malformed.
     }
   }
   return [...allGeneralToolNames]
 }
 
-const readOnlyToolNames = new Set<WordToolName>([
-  'getSelectedText',
-  'getDocumentContent',
-  'getDocumentProperties',
-  'getRangeInfo',
-  'getTableInfo',
-  'findText',
-])
-const safeTextWriteToolNames = new Set<WordToolName>(['insertText', 'replaceSelectedText', 'deleteText'])
-
 function getActiveTools(taskText = '') {
   const normalized = taskText.toLowerCase()
   const needsWrite =
-    /修改|改写|润色|替换|删除|插入|添加|追加|格式|排版|rewrite|edit|replace|delete|insert|format/i.test(normalized)
+    /修改|改写|润色|替换|删除|插入|添加|追加|格式|排版|rewrite|edit|replace|delete|insert|format|review|审阅/i.test(
+      normalized,
+    )
+  const needsRead = /读取|查看|阅读|选区|内容|总结|摘要|read|inspect|selected|summarize|summary/i.test(normalized)
   const needsWeb = /网页|网络|搜索|查资料|网址|web|search|url/i.test(normalized)
   const needsGeneral = needsWeb || /计算|日期|calculate|date/i.test(normalized)
-  const selectedWordTools = enabledWordTools.value.filter(name => {
-    if (readOnlyToolNames.has(name)) return true
-    return needsWrite && safeTextWriteToolNames.has(name)
-  })
-  const selectedGeneralTools = needsGeneral ? enabledGeneralTools.value : []
-  const wordTools = createWordTools(selectedWordTools, {
+  const needsStructure = /全文|整篇|文档|章节|结构|大纲|document|section|outline|structure|review|审阅/i.test(
+    normalized,
+  )
+  const taskToolNames: TaskToolName[] = []
+
+  if (needsStructure) taskToolNames.push('read_document_structure')
+  if (needsRead || needsWrite || needsStructure) taskToolNames.push('read_range')
+  if (needsWrite) taskToolNames.push('propose_document_patch', 'apply_document_patch', 'verify_patch')
+
+  const taskTools = createTaskTools(taskToolNames, {
     requestTextChangeApproval: requestAgentTextChangeApproval,
+    requestSensitiveDataApproval,
     onTextChangeApplied: change => {
       lastAppliedChange.value = change
     },
   })
-  const generalTools = createGeneralTools(selectedGeneralTools)
-  return [...generalTools, ...wordTools]
+  const generalTools = createGeneralTools(needsGeneral ? loadEnabledGeneralTools() : [], {
+    requestExternalApproval: requestExternalNetworkApproval,
+  })
+  return [...generalTools, ...taskTools]
 }
 
 function loadSavedPrompts() {
@@ -861,15 +819,20 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
   // Use agent mode with tools if enabled
   if (isAgentMode) {
     const tools = getActiveTools(getMessageText(userMessage))
+    const agentIterations =
+      provider === 'official' ? activeProfile.value?.agentMaxIterations || 25 : settings.agentMaxIterations
 
     await getAgentResponse({
       ...currentConfig,
-      recursionLimit:
-        provider === 'official' ? activeProfile.value?.agentMaxIterations || 25 : settings.agentMaxIterations,
-      maxToolCalls: Math.max(
-        10,
-        (provider === 'official' ? activeProfile.value?.agentMaxIterations || 25 : settings.agentMaxIterations) * 2,
-      ),
+      recursionLimit: agentIterations,
+      maxToolCalls: Math.max(10, agentIterations * 2),
+      maxModelCalls: agentIterations,
+      maxWrites: 10,
+      maxExternalRequests: 5,
+      maxCostUsd: 1,
+      estimatedCostPerModelCallUsd: 0.01,
+      writeToolNames: ['apply_document_patch'],
+      externalToolNames: ['fetchWebContent', 'searchWeb'],
       maxDurationMs: Math.max(120000, (provider === 'official' ? activeProfile.value?.timeoutMs || 60000 : 60000) * 3),
       messages: finalMessages,
       tools,
@@ -981,6 +944,14 @@ const requestAgentTextChangeApproval = (proposal: TextChangeProposal): Promise<b
     pendingProposal.value = proposal
     agentApprovalResolver.value = resolve
   })
+
+const requestExternalNetworkApproval = async (toolName: GeneralToolName, args: unknown) => {
+  const values = args as { query?: string; url?: string }
+  const target = values.query || values.url || ''
+  return window.confirm(t('externalNetworkConfirm', { tool: toolName, target }))
+}
+
+const requestSensitiveDataApproval = async (scope: string) => window.confirm(t('documentDataConfirm', { scope }))
 
 const restoreLastEdit = async () => {
   if (!lastAppliedChange.value) return
