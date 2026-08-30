@@ -9,26 +9,26 @@
   <!-- Begin Basic Settings: Add-in metadata, used for all versions of Office unless override provided. -->
 
   <!-- IMPORTANT! Id must be unique for your add-in, if you reuse this manifest ensure that you change this id to a new GUID. -->
-  <Id>6b20e038-5f8e-4e3b-8481-976c5a9c0bc3</Id>
+  <Id>6d77c5ce-b83f-42dd-b8cd-40b48fd32970</Id>
 
   <!--Version. Updates from the store only get triggered if there is a version change. -->
   <Version>1.0.0.0</Version>
-  <ProviderName>Kuingsmile</ProviderName>
+  <ProviderName>gzsteven666</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <!-- The display name of your add-in. Used on the store and various places of the Office UI such as the add-ins dialog. -->
-  <DisplayName DefaultValue="GPT Plus" />
+  <DisplayName DefaultValue="GPT Plus Steven" />
   <Description DefaultValue="Integrate the Power of AI Directly into Word"/>
 
   <!-- Icon for your add-in. Used on installation screens and the add-ins dialog. -->
-  <IconUrl DefaultValue="https://word.msq.pub/assets/icon-32.png" />
-  <HighResolutionIconUrl DefaultValue="https://word.msq.pub/assets/icon-64.png"/>
+  <IconUrl DefaultValue="https://gzsteven666.github.io/word-GPT-Plus/assets/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://gzsteven666.github.io/word-GPT-Plus/assets/icon-64.png"/>
 
   <!--If you plan to submit this add-in to the Office Store, uncomment the SupportUrl element below-->
   <SupportUrl DefaultValue="https://github.com/Kuingsmile/word-GPT-Plus" />
 
   <!-- Domains that will be allowed when navigating. For example, if you use ShowTaskpane and then have an href link, navigation will only be allowed if the domain is on this list. -->
   <AppDomains>
-    <AppDomain>https://word.msq.pub</AppDomain>
+    <AppDomain>https://gzsteven666.github.io</AppDomain>
     <AppDomain>https://horosama.com</AppDomain>
   </AppDomains>
   <!--End Basic Settings. -->
@@ -38,7 +38,7 @@
     <Host Name="Document" />
   </Hosts>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://word.msq.pub/index.html" />
+    <SourceLocation DefaultValue="https://gzsteven666.github.io/word-GPT-Plus/index.html" />
   </DefaultSettings>
   <!-- End TaskPane Mode integration.  -->
 
@@ -118,14 +118,14 @@
     <!-- You can use resources across hosts and form factors. -->
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16x16" DefaultValue="https://word.msq.pub/assets/icon-16.png"/>
-        <bt:Image id="Icon.32x32" DefaultValue="https://word.msq.pub/assets/icon-32.png"/>
-        <bt:Image id="Icon.80x80" DefaultValue="https://word.msq.pub/assets/icon-80.png"/>
+        <bt:Image id="Icon.16x16" DefaultValue="https://gzsteven666.github.io/word-GPT-Plus/assets/icon-16.png"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://gzsteven666.github.io/word-GPT-Plus/assets/icon-32.png"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://gzsteven666.github.io/word-GPT-Plus/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
         <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://go.microsoft.com/fwlink/?LinkId=276812" />
-        <bt:Url id="Commands.Url" DefaultValue="https://word.msq.pub/commands.html" />
-        <bt:Url id="Taskpane.Url" DefaultValue="https://word.msq.pub/index.html" />
+        <bt:Url id="Commands.Url" DefaultValue="https://gzsteven666.github.io/word-GPT-Plus/index.html" />
+        <bt:Url id="Taskpane.Url" DefaultValue="https://gzsteven666.github.io/word-GPT-Plus/index.html" />
       </bt:Urls>
       <!-- ShortStrings max characters==125. -->
       <bt:ShortStrings>
