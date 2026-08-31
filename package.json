@@ -1,13 +1,13 @@
 {
   "name": "word-gpt-plus",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --port 3000",
     "build": "vite build",
     "serve": "vite preview --port 3000",
-    "test": "tsx tests/providerProfiles.test.ts && tsx tests/modelCatalog.test.ts && tsx tests/textProposal.test.ts && tsx tests/errors.test.ts && tsx tests/taskTools.test.ts && tsx tests/formatRuntime.test.ts && tsx tests/agentPolicy.test.ts",
+    "test": "tsx tests/providerProfiles.test.ts && tsx tests/modelCatalog.test.ts && tsx tests/textProposal.test.ts && tsx tests/errors.test.ts && tsx tests/taskTools.test.ts && tsx tests/formatRuntime.test.ts && tsx tests/safeEditAnchor.test.ts && tsx tests/agentPolicy.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

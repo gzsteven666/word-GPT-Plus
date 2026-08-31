@@ -5,10 +5,10 @@ import { AppError } from '@/api/errors'
 import {
   AppliedTextChange,
   applyTextChangeProposal,
+  makeSelectionInsertProposal,
   makeSelectionProposal,
-  readSelectionSnapshot,
 } from '@/api/safeEdit'
-import { createTextChangeProposal, TextChangeProposal } from '@/utils/textProposal'
+import { TextChangeProposal } from '@/utils/textProposal'
 
 export type WordToolName =
   | 'getSelectedText'
@@ -897,18 +897,8 @@ export function createWordTools(enabledTools?: WordToolName[], security?: WordTo
               } else if (def.name === 'deleteText') {
                 proposal = await makeSelectionProposal('', 'agent', 'delete')
               } else if (def.name === 'insertText') {
-                const snapshot = await readSelectionSnapshot()
                 const location = args.location || 'End'
-                const afterText = ['Start', 'Before'].includes(location)
-                  ? `${args.text}${snapshot.text}`
-                  : `${snapshot.text}${args.text}`
-                proposal = createTextChangeProposal({
-                  operation: 'insert',
-                  beforeText: snapshot.text,
-                  afterText,
-                  beforeOoxml: snapshot.ooxml,
-                  source: 'agent',
-                })
+                proposal = await makeSelectionInsertProposal(args.text, location, 'agent')
               } else {
                 throw new AppError('WORD_API_UNSUPPORTED', 'This write operation is not available in safe edit mode')
               }

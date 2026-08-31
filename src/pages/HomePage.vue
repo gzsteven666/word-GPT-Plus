@@ -306,9 +306,12 @@ import { useRouter } from 'vue-router'
 import { type CheckpointTuple, IndexedDBSaver } from '@/api/checkpoints'
 import { classifyError } from '@/api/errors'
 import {
+  AppliedTextChange,
   applyTextChangeProposal,
   makeSelectionProposal,
   readSelectionSnapshot,
+  releaseSelectionAnchor,
+  releaseTextChangeAnchor,
   restoreTextChange,
 } from '@/api/safeEdit'
 import { getAgentResponse, getChatResponse } from '@/api/union'
@@ -334,9 +337,11 @@ import {
   createTaskTools,
   createTaskToolState,
   extractUserInstruction,
+  FormatRequest,
   inferRequestedFormatFields,
   isConfirmationIntent,
   resolveFormatToolRoute,
+  restoreFormatRequest,
   TaskToolName,
 } from '@/utils/taskTools'
 import { TextChangeProposal } from '@/utils/textProposal'
@@ -406,8 +411,8 @@ function getActiveTools(taskText = '') {
   if ((needsRead || needsTextEdit || needsStructure) && !isFormattingOnly) taskToolNames.push('read_range')
   if (needsTextEdit) taskToolNames.push('propose_document_patch', 'apply_document_patch', 'verify_patch')
 
-  // Low-risk formatting is reversible through Word Undo, so execute it in one
-  // verified tool call unless the user explicitly requests a preview.
+  // Low-risk formatting is reversible through the task-pane restore action, so
+  // execute it in one verified tool call unless the user explicitly requests a preview.
   if (formatToolRoute === 'apply_format_patch') {
     taskToolNames.push(formatToolRoute)
     requiredToolNames.push(formatToolRoute)
@@ -437,7 +442,10 @@ function getActiveTools(taskText = '') {
       requestSensitiveDataApproval,
       allowedFormatFields: inferRequestedFormatFields(instruction),
       onTextChangeApplied: change => {
-        lastAppliedChange.value = change
+        lastAppliedChange.value = { kind: 'text', change }
+      },
+      onFormatApplied: request => {
+        lastAppliedChange.value = { kind: 'format', request }
       },
     },
     taskToolState,
@@ -498,7 +506,8 @@ const insertType = ref<insertTypes>('replace')
 
 const errorIssue = ref<boolean | string | null>(false)
 const pendingProposal = ref<TextChangeProposal | null>(null)
-const lastAppliedChange = ref<Awaited<ReturnType<typeof applyTextChangeProposal>> | null>(null)
+type AppliedDocumentChange = { kind: 'text'; change: AppliedTextChange } | { kind: 'format'; request: FormatRequest }
+const lastAppliedChange = ref<AppliedDocumentChange | null>(null)
 const agentApprovalResolver = ref<((accepted: boolean) => void) | null>(null)
 const pendingConfirmation = ref<{ title: string; message: string } | null>(null)
 let pendingConfirmationResolver: ((accepted: boolean) => void) | null = null
@@ -790,7 +799,7 @@ You are a highly skilled Microsoft Word Expert Agent. Your goal is to assist use
 
 # Guidelines
 1. **Tool First**: If a request requires document modification or inspection or web search and fetch, you MUST use the available tool. A text-only answer never completes a document action.
-2. **Simple formatting executes immediately**: for a low-risk formatting request, call format_document_selection in the same turn and report its verification. Word Undo provides recovery. Do not ask for confirmation unless the user explicitly requests a preview.
+2. **Simple formatting executes immediately**: for a low-risk formatting request, call format_document_selection in the same turn and report its verification. The task pane keeps a restore snapshot. Do not ask for confirmation unless the user explicitly requests a preview.
 3. **Explicit preview remains two-phase**: if the user asks to see a plan or wait for confirmation, call propose_format_patch, show only the actual returned changes, and end the turn. On a later confirmation, call apply_format_patch with the exact active formatId. Do not ask twice or create a replacement proposal.
 4. **Never invent IDs or errors**: use only IDs and errors returned by tools. If no tool was called, state that nothing executed; never guess an API, permission, window, or runtime error.
 5. **Minimal formatting delta**: include only formatting fields the user explicitly requested. Omit every unspecified field; never reset it to a presumed default, and never claim an unspecified font, color, alignment, spacing, bold, italic, or underline value will be preserved by setting it.
@@ -1044,10 +1053,17 @@ const acceptPendingProposal = async () => {
   }
 
   try {
-    lastAppliedChange.value = await applyTextChangeProposal(proposal)
+    const previousChange = lastAppliedChange.value
+    const applied = await applyTextChangeProposal(proposal)
+    lastAppliedChange.value = { kind: 'text', change: applied }
+    if (previousChange?.kind === 'text')
+      void releaseTextChangeAnchor(previousChange.change.proposal).catch(() => undefined)
+    if (previousChange?.kind === 'format' && previousChange.request.anchorTag)
+      void releaseSelectionAnchor(previousChange.request.anchorTag).catch(() => undefined)
     pendingProposal.value = null
     messageUtil.success(t('editApplied'))
   } catch (error) {
+    void releaseTextChangeAnchor(proposal).catch(() => undefined)
     pendingProposal.value = null
     messageUtil.error(t(classifyError(error).code))
   }
@@ -1057,6 +1073,7 @@ const cancelPendingProposal = () => {
   const resolve = agentApprovalResolver.value
   agentApprovalResolver.value = null
   if (pendingProposal.value) pendingProposal.value.status = 'cancelled'
+  if (pendingProposal.value) void releaseTextChangeAnchor(pendingProposal.value).catch(() => undefined)
   pendingProposal.value = null
   resolve?.(false)
 }
@@ -1099,7 +1116,8 @@ onBeforeUnmount(() => resolvePendingConfirmation(false))
 const restoreLastEdit = async () => {
   if (!lastAppliedChange.value) return
   try {
-    await restoreTextChange(lastAppliedChange.value)
+    if (lastAppliedChange.value.kind === 'text') await restoreTextChange(lastAppliedChange.value.change)
+    else await restoreFormatRequest(lastAppliedChange.value.request)
     lastAppliedChange.value = null
     messageUtil.success(t('editRestored'))
   } catch (error) {

@@ -5,14 +5,17 @@ import { AppError } from '@/api/errors'
 import {
   AppliedTextChange,
   applyTextChangeProposal,
+  createSelectionAnchor,
+  getAnchoredRange,
+  makeSelectionInsertProposal,
   makeSelectionProposal,
   readSelectionInspection,
-  readSelectionSnapshot,
   readSelectionTextSnapshot,
+  releaseSelectionAnchor,
   restoreTextChange,
   verifyTextChange,
 } from '@/api/safeEdit'
-import { buildTextDiff, createTextChangeProposal, hashText, TextChangeProposal } from '@/utils/textProposal'
+import { buildTextDiff, hashText, TextChangeProposal } from '@/utils/textProposal'
 
 export type TaskToolName =
   | 'read_document_structure'
@@ -29,6 +32,10 @@ export interface FormatRequest {
   scope: 'selection' | 'document'
   changes: Record<string, boolean | number | string>
   beforeHash?: string
+  beforeOoxml?: string
+  beforeOoxmlHash?: string
+  anchorTag?: string
+  appliedOoxmlHash?: string
 }
 
 /**
@@ -57,6 +64,7 @@ export interface TaskToolSecurity {
   requestTextChangeApproval?: (proposal: TextChangeProposal) => Promise<boolean>
   requestSensitiveDataApproval?: (scope: string) => Promise<boolean>
   onTextChangeApplied?: (change: AppliedTextChange) => void
+  onFormatApplied?: (request: FormatRequest) => void
   allowedFormatFields?: string[]
 }
 
@@ -132,18 +140,8 @@ const createProposalFromSelection = async (
   operation: TextChangeProposal['operation'],
   afterText: string,
 ): Promise<TextChangeProposal> => {
-  if (operation === 'replace' || operation === 'delete') {
-    return makeSelectionProposal(afterText, 'agent', operation)
-  }
-
-  const snapshot = await readSelectionSnapshot()
-  return createTextChangeProposal({
-    operation,
-    beforeText: snapshot.text,
-    afterText: `${snapshot.text}${afterText}`,
-    beforeOoxml: snapshot.ooxml,
-    source: 'agent',
-  })
+  if (operation === 'insert') return makeSelectionInsertProposal(afterText, 'End', 'agent')
+  return makeSelectionProposal(afterText, 'agent', operation)
 }
 
 const readDocumentHash = async (): Promise<string> =>
@@ -156,6 +154,30 @@ const readDocumentHash = async (): Promise<string> =>
 
 const readCurrentHash = async (scope: FormatRequest['scope']): Promise<string> =>
   scope === 'selection' ? (await readSelectionTextSnapshot()).hash : readDocumentHash()
+
+const readDocumentOoxml = async (): Promise<string> =>
+  Word.run(async context => {
+    const range = context.document.body.getRange()
+    const ooxml = range.getOoxml()
+    await context.sync()
+    return ooxml.value || ''
+  })
+
+const readFormatOoxmlHash = async (request: FormatRequest): Promise<string> =>
+  Word.run(async context => {
+    const controls = request.anchorTag ? context.document.contentControls : undefined
+    controls?.load('items/tag')
+    if (controls) await context.sync()
+    const range = request.anchorTag
+      ? getAnchoredRange(controls!, request.anchorTag)
+      : request.scope === 'document'
+        ? context.document.body.getRange()
+        : context.document.getSelection()
+    if (!range) throw new AppError('DOCUMENT_CONFLICT', 'The formatting anchor is no longer available')
+    const ooxml = range.getOoxml()
+    await context.sync()
+    return hashText(ooxml.value || '')
+  })
 
 /**
  * Extract the formatting-change map from tool arguments, dropping control
@@ -180,7 +202,24 @@ const restrictFormatChanges = (
 const applyFormatRequest = async (request: FormatRequest): Promise<void> => {
   const changes = request.changes
   await Word.run(async context => {
-    const range = request.scope === 'document' ? context.document.body.getRange() : context.document.getSelection()
+    const controls = request.anchorTag ? context.document.contentControls : undefined
+    controls?.load('items/tag')
+    if (controls) await context.sync()
+    const range = request.anchorTag
+      ? getAnchoredRange(controls!, request.anchorTag)
+      : request.scope === 'document'
+        ? context.document.body.getRange()
+        : context.document.getSelection()
+    if (!range) throw new AppError('DOCUMENT_CONFLICT', 'The formatting anchor is no longer available')
+    const currentOoxml = range.getOoxml()
+    range.load('text')
+    await context.sync()
+    if (request.beforeHash && hashText(range.text || '') !== request.beforeHash) {
+      throw new AppError('DOCUMENT_CONFLICT', 'The selection changed while formatting was awaiting approval')
+    }
+    if (request.beforeOoxmlHash && hashText(currentOoxml.value || '') !== request.beforeOoxmlHash) {
+      throw new AppError('DOCUMENT_CONFLICT', 'The selection formatting changed while approval was pending')
+    }
 
     if (changes.bold !== undefined) range.font.bold = changes.bold as boolean
     if (changes.italic !== undefined) range.font.italic = changes.italic as boolean
@@ -238,7 +277,15 @@ export interface FormatVerification {
 const verifyFormatRequest = async (request: FormatRequest): Promise<FormatVerification> =>
   Word.run(async context => {
     const changes = request.changes
-    const range = request.scope === 'document' ? context.document.body.getRange() : context.document.getSelection()
+    const controls = request.anchorTag ? context.document.contentControls : undefined
+    controls?.load('items/tag')
+    if (controls) await context.sync()
+    const range = request.anchorTag
+      ? getAnchoredRange(controls!, request.anchorTag)
+      : request.scope === 'document'
+        ? context.document.body.getRange()
+        : context.document.getSelection()
+    if (!range) throw new AppError('DOCUMENT_CONFLICT', 'The formatting anchor is no longer available')
     range.font.load('name,size,bold,italic,underline,color,highlightColor')
     const paragraphs = range.paragraphs
     paragraphs.load('items')
@@ -383,7 +430,7 @@ export const createTaskTools = (
         {
           name: 'propose_document_patch',
           description:
-            'Create a reviewable text patch for the current Word selection. This never writes to the document. Call apply_document_patch only after the proposal is ready for user review.',
+            'Create a reviewable text patch for the current Word selection. This does not alter visible content, but creates a hidden temporary anchor so the original range remains stable. Call apply_document_patch only after the proposal is ready for user review.',
           schema: z.object({
             operation: z.enum(['replace', 'insert', 'delete']),
             afterText: z
@@ -473,16 +520,28 @@ export const createTaskTools = (
             throw new AppError('REQUEST_FAILED', 'At least one formatting change is required')
           }
           const scope = (args.scope || 'selection') as 'selection' | 'document'
-          const beforeHash = await readCurrentHash(scope)
+          const anchor = scope === 'selection' ? await createSelectionAnchor() : null
+          const beforeHash = anchor?.hash || (await readCurrentHash(scope))
           const request: FormatRequest = {
             id: crypto.randomUUID(),
             scope,
             changes,
             beforeHash,
+            beforeOoxml: anchor?.ooxml || (scope === 'document' ? await readDocumentOoxml() : undefined),
+            beforeOoxmlHash: anchor?.ooxml
+              ? hashText(anchor.ooxml)
+              : scope === 'document'
+                ? hashText(await readDocumentOoxml())
+                : undefined,
+            anchorTag: anchor?.tag,
           }
           // One active proposal is exposed to the next agent turn. Creating a
           // replacement plan supersedes the previous unconfirmed plan.
-          if (state.activeFormatRequestId) state.formatRequests.delete(state.activeFormatRequestId)
+          if (state.activeFormatRequestId) {
+            const previous = state.formatRequests.get(state.activeFormatRequestId)
+            if (previous?.anchorTag) void releaseSelectionAnchor(previous.anchorTag).catch(() => undefined)
+            state.formatRequests.delete(state.activeFormatRequestId)
+          }
           state.formatRequests.set(request.id, request)
           state.activeFormatRequestId = request.id
           return JSON.stringify({
@@ -496,7 +555,7 @@ export const createTaskTools = (
         {
           name: 'propose_format_patch',
           description:
-            'Create a reviewable formatting plan for the current selection or the whole document. Include only fields explicitly requested by the user and omit all unspecified fields. This never writes to the document and never shows a dialog. Present the plan, end the turn, then call apply_format_patch only if a later user message confirms it.',
+            'Create a reviewable formatting plan for the current selection or the whole document. Include only fields explicitly requested by the user and omit all unspecified fields. This does not alter visible content, but creates a hidden temporary anchor for selection scope. Present the plan, end the turn, then call apply_format_patch only if a later user message confirms it.',
           schema: z.object(formatFieldsSchema),
         },
       ),
@@ -530,13 +589,21 @@ export const createTaskTools = (
           if (currentHash !== request.beforeHash) {
             state.formatRequests.delete(request.id)
             state.activeFormatRequestId = null
+            if (request.anchorTag) void releaseSelectionAnchor(request.anchorTag).catch(() => undefined)
             throw new AppError('DOCUMENT_CONFLICT', 'The document changed while formatting was awaiting approval')
           }
 
-          await applyFormatRequest(request)
+          try {
+            await applyFormatRequest(request)
+          } catch (error) {
+            if (request.anchorTag) void releaseSelectionAnchor(request.anchorTag).catch(() => undefined)
+            throw error
+          }
+          request.appliedOoxmlHash = await readFormatOoxmlHash(request)
           state.appliedFormatRequests.set(request.id, request)
           state.formatRequests.delete(request.id)
           state.activeFormatRequestId = null
+          security?.onFormatApplied?.(request)
           const verification = await verifyFormatRequest(request)
           return JSON.stringify({
             formatId: request.id,
@@ -577,22 +644,42 @@ export const createTaskTools = (
             })
           }
           const scope = (args.scope || 'selection') as 'selection' | 'document'
+          const anchor = scope === 'selection' ? await createSelectionAnchor() : null
           const beforeHash = await readCurrentHash(scope)
           const request: FormatRequest = {
             id: (args.operationId as string) || crypto.randomUUID(),
             scope,
             changes,
             beforeHash,
+            beforeOoxml: anchor?.ooxml || (scope === 'document' ? await readDocumentOoxml() : undefined),
+            beforeOoxmlHash: anchor?.ooxml
+              ? hashText(anchor.ooxml)
+              : scope === 'document'
+                ? hashText(await readDocumentOoxml())
+                : undefined,
+            anchorTag: anchor?.tag,
           }
           const currentHash = await readCurrentHash(request.scope)
           if (currentHash !== request.beforeHash) {
+            if (request.anchorTag) void releaseSelectionAnchor(request.anchorTag).catch(() => undefined)
             throw new AppError('DOCUMENT_CONFLICT', 'The document changed while formatting was awaiting approval')
           }
 
-          await applyFormatRequest(request)
+          try {
+            await applyFormatRequest(request)
+          } catch (error) {
+            if (request.anchorTag) void releaseSelectionAnchor(request.anchorTag).catch(() => undefined)
+            throw error
+          }
+          request.appliedOoxmlHash = await readFormatOoxmlHash(request)
           state.appliedFormatRequests.set(request.id, request)
-          if (state.activeFormatRequestId) state.formatRequests.delete(state.activeFormatRequestId)
+          if (state.activeFormatRequestId) {
+            const previous = state.formatRequests.get(state.activeFormatRequestId)
+            if (previous?.anchorTag) void releaseSelectionAnchor(previous.anchorTag).catch(() => undefined)
+            state.formatRequests.delete(state.activeFormatRequestId)
+          }
           state.activeFormatRequestId = null
+          security?.onFormatApplied?.(request)
           const verification = await verifyFormatRequest(request)
           return JSON.stringify({
             operationId: request.id,
@@ -645,3 +732,35 @@ export const createTaskTools = (
 }
 
 export const restoreAppliedTaskChange = async (change: AppliedTextChange) => restoreTextChange(change)
+
+export const restoreFormatRequest = async (request: FormatRequest): Promise<void> => {
+  const beforeOoxml = request.beforeOoxml
+  if (!beforeOoxml) throw new AppError('REQUEST_FAILED', 'The original formatting snapshot is unavailable')
+  await Word.run(async context => {
+    const controls = request.anchorTag ? context.document.contentControls : undefined
+    controls?.load('items/tag')
+    if (controls) await context.sync()
+    const range = request.anchorTag
+      ? getAnchoredRange(controls!, request.anchorTag)
+      : request.scope === 'document'
+        ? context.document.body.getRange()
+        : context.document.getSelection()
+    if (!range) throw new AppError('DOCUMENT_CONFLICT', 'The formatting anchor is no longer available')
+    const currentOoxml = range.getOoxml()
+    range.load('text')
+    await context.sync()
+    if (request.beforeHash && hashText(range.text || '') !== request.beforeHash) {
+      throw new AppError('DOCUMENT_CONFLICT', 'The document text changed after formatting was applied')
+    }
+    if (request.appliedOoxmlHash && hashText(currentOoxml.value || '') !== request.appliedOoxmlHash) {
+      throw new AppError('DOCUMENT_CONFLICT', 'The document formatting changed after formatting was applied')
+    }
+    range.insertOoxml(beforeOoxml, 'Replace')
+    await context.sync()
+    if (request.anchorTag) {
+      const control = controls!.items.find(item => item.tag === request.anchorTag)
+      control?.delete(true)
+      await context.sync()
+    }
+  })
+}

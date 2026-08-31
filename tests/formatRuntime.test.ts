@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { readSelectionInspection } from '../src/api/safeEdit.ts'
-import { createTaskTools, createTaskToolState } from '../src/utils/taskTools.ts'
+import { createTaskTools, createTaskToolState, restoreFormatRequest } from '../src/utils/taskTools.ts'
 
 const originalWord = globalThis.Word
 
@@ -36,9 +36,9 @@ try {
   assert.match(inspection.warning || '', /could not inspect non-text objects/i)
   assert.equal(inspectionRuns, 2)
 
-  // Formatting proposals and application use the text hash only, so OOXML is
-  // never requested. Applying an active proposal does not require window.confirm.
+  // Formatting proposals keep a hidden anchor and verify both text and OOXML.
   let ooxmlCalls = 0
+  const controls = { items: [] as any[], load: () => undefined }
   const paragraph = {
     alignment: 'Left',
     lineSpacing: 12,
@@ -47,10 +47,26 @@ try {
   }
   const range = {
     text: 'influence ',
+    ooxml: '<w:p><w:r><w:t>influence </w:t></w:r></w:p>',
     load: () => undefined,
     getOoxml: () => {
       ooxmlCalls++
-      throw new Error('getOoxml should not be called by formatting')
+      return { value: range.ooxml }
+    },
+    insertContentControl: () => {
+      const control = {
+        tag: '',
+        title: '',
+        appearance: '',
+        getRange: () => range,
+        delete: () => undefined,
+      }
+      controls.items.push(control)
+      return control
+    },
+    insertOoxml: (ooxml: string) => {
+      range.ooxml = ooxml
+      range.font.size = 11
     },
     font: {
       name: 'Calibri',
@@ -67,10 +83,28 @@ try {
       load: () => undefined,
     },
   }
+  const otherRange = {
+    ...range,
+    font: { ...range.font },
+    getOoxml: () => ({ value: '<w:p><w:r><w:t>other</w:t></w:r></w:p>' }),
+  }
+  otherRange.insertContentControl = () => {
+    const control = {
+      tag: '',
+      title: '',
+      appearance: '',
+      getRange: () => otherRange,
+      delete: () => undefined,
+    }
+    controls.items.push(control)
+    return control
+  }
+  let currentSelection = range
   installWordMock(async callback => {
     const context = {
       document: {
-        getSelection: () => range,
+        getSelection: () => currentSelection,
+        contentControls: controls,
         body: { getRange: () => range },
       },
       sync: async () => undefined,
@@ -83,6 +117,7 @@ try {
   const proposal = JSON.parse(String(await proposeTool.invoke({ scope: 'selection', fontSize: 12 })))
   assert.deepEqual(proposal.changes, { fontSize: 12 })
   assert.equal(state.activeFormatRequestId, proposal.formatId)
+  currentSelection = otherRange
 
   const applyTool = createTaskTools(['apply_format_patch'], undefined, state)[0]
   const applied = JSON.parse(String(await applyTool.invoke({ formatId: proposal.formatId })))
@@ -90,8 +125,11 @@ try {
   assert.deepEqual(applied.changes, { fontSize: 12 })
   assert.equal(applied.verification.verified, true)
   assert.equal(range.font.size, 12)
-  assert.equal(ooxmlCalls, 0)
+  assert.equal(otherRange.font.size, 11)
+  assert.ok(ooxmlCalls > 0)
   assert.equal(state.activeFormatRequestId, null)
+  await restoreFormatRequest(state.appliedFormatRequests.get(proposal.formatId)!)
+  assert.equal(range.font.size, 11)
 
   const directTool = createTaskTools(['format_document_selection'], { allowedFormatFields: ['fontSize'] }, state)[0]
   const directResult = JSON.parse(
@@ -100,9 +138,9 @@ try {
   assert.equal(directResult.status, 'applied')
   assert.deepEqual(directResult.changes, { fontSize: 14 })
   assert.equal(directResult.verification.verified, true)
-  assert.equal(range.font.size, 14)
-  assert.equal(range.font.name, 'Calibri')
-  assert.equal(range.font.bold, false)
+  assert.equal(otherRange.font.size, 14)
+  assert.equal(otherRange.font.name, 'Calibri')
+  assert.equal(otherRange.font.bold, false)
 } finally {
   globalThis.Word = originalWord
 }

@@ -12,6 +12,8 @@ export interface TextChangeProposal {
   beforeText: string
   afterText: string
   beforeOoxml?: string
+  expectedBeforeOoxmlHash?: string
+  anchorTag?: string
   expectedBeforeHash: string
   risk: TextChangeRisk
   source: TextChangeSource
@@ -87,6 +89,7 @@ export const createTextChangeProposal = (options: {
     beforeText: options.beforeText,
     afterText: options.afterText,
     beforeOoxml: options.beforeOoxml,
+    expectedBeforeOoxmlHash: options.beforeOoxml ? hashText(options.beforeOoxml) : undefined,
     expectedBeforeHash: hashText(options.beforeText),
     risk: calculateRisk(options.beforeText, options.afterText),
     source: options.source,

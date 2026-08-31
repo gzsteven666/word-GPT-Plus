@@ -1,3 +1,9 @@
+## 2.4.0
+
+* Add stable hidden anchors for reviewable text and formatting proposals.
+* Guard pending and applied edits with text and OOXML conflict checks.
+* Restore text and formatting from OOXML snapshots and clean up anchors after restore or cancellation.
+
 ##  (2026-01-29)
 
 * :arrow_up: Upgrade(custom): upgrade deps to latest 5334b5d
@@ -362,6 +368,5 @@
 * **custom:** add support of web api using access token ([4faa1bb](https://github.com/Kuingsmile/word-GPT-Plus/commit/4faa1bb))
 * **custom:** fix docs ([6010124](https://github.com/Kuingsmile/word-GPT-Plus/commit/6010124))
 * **custom:** update README ([77ddaa8](https://github.com/Kuingsmile/word-GPT-Plus/commit/77ddaa8))
-
 
 
