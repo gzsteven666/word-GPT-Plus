@@ -1,6 +1,7 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 
+import { createDocumentMap, readDocumentMapNodes } from '@/api/documentMapRuntime'
 import {
   applyDocumentPatchSet,
   proposeDocumentPatchSet,
@@ -21,11 +22,15 @@ import {
   restoreTextChange,
   verifyTextChange,
 } from '@/api/safeEdit'
+import { DocumentMap, queryDocumentMap } from '@/utils/documentMap'
 import { DocumentPatchSet, PatchOperationInput } from '@/utils/documentPatch'
 import { buildTextDiff, hashText, TextChangeProposal } from '@/utils/textProposal'
 
 export type TaskToolName =
   | 'read_document_structure'
+  | 'create_document_map'
+  | 'query_document_map'
+  | 'read_document_nodes'
   | 'read_range'
   | 'propose_document_patch'
   | 'apply_document_patch'
@@ -61,6 +66,7 @@ export interface TaskToolState {
   activeFormatRequestId: string | null
   appliedFormatRequests: Map<string, FormatRequest>
   patchSets: Map<string, DocumentPatchSet>
+  documentMaps: Map<string, DocumentMap>
 }
 
 export const createTaskToolState = (): TaskToolState => ({
@@ -70,6 +76,7 @@ export const createTaskToolState = (): TaskToolState => ({
   activeFormatRequestId: null,
   appliedFormatRequests: new Map(),
   patchSets: new Map(),
+  documentMaps: new Map(),
 })
 
 export interface TaskToolSecurity {
@@ -381,6 +388,98 @@ export const createTaskTools = (
   const shouldEnable = (name: TaskToolName) => !enabledTools || enabledTools.includes(name)
   const tools = []
 
+  if (shouldEnable('create_document_map')) {
+    tools.push(
+      tool(
+        async () => {
+          if (security?.requestSensitiveDataApproval) {
+            const approved = await security.requestSensitiveDataApproval('document headings and paragraph previews')
+            if (!approved) return 'The user did not authorize sharing the document map with the model.'
+          }
+          const map = await createDocumentMap()
+          state.documentMaps.set(map.id, map)
+          const headingNodes = map.nodes.filter(node => node.kind === 'heading')
+          const headings = headingNodes
+            .slice(0, 100)
+            .map(node => ({ nodeId: node.id, level: node.headingLevel, path: node.headingPath, preview: node.preview }))
+          return JSON.stringify({
+            mapId: map.id,
+            nodeCount: map.nodes.length,
+            headingCount: headingNodes.length,
+            protectedObjectsAvailable: map.nodes.every(node => node.protectedObjectsAvailable),
+            headings,
+          })
+        },
+        {
+          name: 'create_document_map',
+          description:
+            'Build a read-only, in-memory map of Word headings and paragraphs. It returns node IDs, heading paths, counts, and bounded previews; it never changes the document.',
+          schema: z.object({}),
+        },
+      ),
+    )
+  }
+
+  if (shouldEnable('query_document_map')) {
+    tools.push(
+      tool(
+        async input => {
+          const args = input as { mapId: string; query: string; limit?: number }
+          const map = state.documentMaps.get(args.mapId)
+          if (!map) throw new AppError('REQUEST_FAILED', 'The document map was not found or has expired')
+          return JSON.stringify(
+            queryDocumentMap(map, args.query, args.limit).map(result => ({
+              nodeId: result.node.id,
+              score: result.score,
+              kind: result.node.kind,
+              order: result.node.order,
+              headingPath: result.node.headingPath,
+              preview: result.node.preview,
+              protectedObjectsAvailable: result.node.protectedObjectsAvailable,
+            })),
+          )
+        },
+        {
+          name: 'query_document_map',
+          description:
+            'Search an existing document map by heading path and paragraph keywords. Returns ranked node IDs and short previews without reading the full document.',
+          schema: z.object({
+            mapId: z.string(),
+            query: z.string().min(1),
+            limit: z.number().int().positive().max(50).optional(),
+          }),
+        },
+      ),
+    )
+  }
+
+  if (shouldEnable('read_document_nodes')) {
+    tools.push(
+      tool(
+        async input => {
+          const args = input as { mapId: string; nodeIds: string[]; maxChars?: number }
+          const map = state.documentMaps.get(args.mapId)
+          if (!map) throw new AppError('REQUEST_FAILED', 'The document map was not found or has expired')
+          if (security?.requestSensitiveDataApproval) {
+            const approved = await security.requestSensitiveDataApproval('selected document nodes')
+            if (!approved) return 'The user did not authorize sharing the selected document nodes.'
+          }
+          return JSON.stringify(await readDocumentMapNodes(map, args.nodeIds, args.maxChars))
+        },
+        {
+          name: 'read_document_nodes',
+          description:
+            'Read only the selected nodes from a document map, bounded by maxChars. Rechecks the map hashes and rejects stale or moved nodes.',
+          schema: z.object({
+            mapId: z.string(),
+            nodeIds: z.array(z.string()).min(1).max(50),
+            maxChars: z.number().int().positive().max(50000).optional(),
+          }),
+        },
+      ),
+    )
+  }
+
   if (shouldEnable('read_document_structure')) {
     tools.push(
       tool(
@@ -495,7 +594,12 @@ export const createTaskTools = (
       tool(
         async input => {
           const args = input as { operations: PatchOperationInput[] }
-          const patchSet = await proposeDocumentPatchSet(args.operations)
+          const mapIds = [...new Set(args.operations.map(operation => operation.mapId).filter(Boolean))]
+          if (mapIds.length > 1) throw new AppError('DOCUMENT_CONFLICT', 'A PatchSet cannot use multiple document maps')
+          const documentMap = mapIds[0] ? state.documentMaps.get(mapIds[0]) : undefined
+          if (mapIds[0] && !documentMap)
+            throw new AppError('REQUEST_FAILED', 'The document map was not found or has expired')
+          const patchSet = await proposeDocumentPatchSet(args.operations, documentMap)
           state.patchSets.set(patchSet.id, patchSet)
           return JSON.stringify({
             patchSetId: patchSet.id,
@@ -524,6 +628,8 @@ export const createTaskTools = (
                   replacementText: z.string(),
                   beforeContext: z.string().optional(),
                   afterContext: z.string().optional(),
+                  mapId: z.string().optional(),
+                  targetNodeId: z.string().optional(),
                 }),
               )
               .min(1),

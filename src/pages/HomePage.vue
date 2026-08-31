@@ -112,16 +112,29 @@
             <div
               class="group max-w-[95%] rounded-md border border-border-secondary p-1 text-sm leading-[1.4] wrap-break-word whitespace-pre-wrap text-main/90 shadow-sm group-[.assistant]:bg-bg-tertiary group-[.assistant]:text-left group-[.user]:bg-accent/10"
             >
-              <template v-for="(segment, idx) in renderSegments(msg)" :key="idx">
-                <span v-if="segment.type === 'text'">{{ segment.text.trim() }}</span>
-                <details v-else class="mb-1 rounded-sm border border-border-secondary bg-bg-secondary">
-                  <summary class="cursor-pointer list-none p-1 text-sm font-semibold text-secondary">
-                    Thought process
-                  </summary>
-                  <pre class="m-0 p-1 text-xs wrap-break-word whitespace-pre-wrap text-secondary">{{
-                    segment.text.trim()
-                  }}</pre>
-                </details>
+              <template
+                v-if="
+                  msg instanceof AIMessage &&
+                  loading &&
+                  abortController &&
+                  index === displayHistory.length - 1 &&
+                  !cleanMessageText(msg)
+                "
+              >
+                <span class="text-secondary">{{ $t('thinking') }}</span>
+              </template>
+              <template v-else>
+                <template v-for="(segment, idx) in renderSegments(msg)" :key="idx">
+                  <span v-if="segment.type === 'text'">{{ segment.text.trim() }}</span>
+                  <details v-else class="mb-1 rounded-sm border border-border-secondary bg-bg-secondary">
+                    <summary class="cursor-pointer list-none p-1 text-sm font-semibold text-secondary">
+                      Thought process
+                    </summary>
+                    <pre class="m-0 p-1 text-xs wrap-break-word whitespace-pre-wrap text-secondary">{{
+                      segment.text.trim()
+                    }}</pre>
+                  </details>
+                </template>
               </template>
             </div>
             <div v-if="msg instanceof AIMessage" class="flex gap-1">
@@ -325,10 +338,12 @@ import SingleSelect from '@/components/SingleSelect.vue'
 import CheckPointsPage from '@/pages/checkPointsPage.vue'
 import { checkAuth } from '@/utils/common'
 import { buildInPrompt, getBuiltInPrompt } from '@/utils/constant'
+import { hasDocumentMapTargetReference, isDocumentMapIntent } from '@/utils/documentMap'
 import { acceptPatchOperation, DocumentPatchSet, rejectPatchOperation } from '@/utils/documentPatch'
 import { localStorageKey } from '@/utils/enum'
 import { createGeneralTools, GeneralToolName } from '@/utils/generalTools'
 import { message as messageUtil } from '@/utils/message'
+import { stripToolActivity } from '@/utils/messageText'
 import {
   createProviderModel,
   getResolvedCapability,
@@ -400,6 +415,8 @@ function getActiveTools(taskText = '') {
   const needsRead = /读取|查看|阅读|总结|摘要|read|inspect|summarize|summary/i.test(normalized)
   const needsWeb = /网页|网络|搜索|查资料|网址|web|search|url/i.test(normalized)
   const needsGeneral = needsWeb || /计算|日期|calculate|date/i.test(normalized)
+  const hasScopedDocumentMapTarget = needsTextEdit && hasDocumentMapTargetReference(normalized)
+  const needsDocumentMap = isDocumentMapIntent(normalized) && !hasScopedDocumentMapTarget
   const needsStructure = /全文|整篇|文档|章节|结构|大纲|document|section|outline|structure|review|审阅/i.test(
     normalized,
   )
@@ -414,6 +431,8 @@ function getActiveTools(taskText = '') {
   const requiredToolNames: TaskToolName[] = []
 
   if (needsStructure && !isFormattingOnly) taskToolNames.push('read_document_structure')
+  if (needsDocumentMap && !isFormattingOnly)
+    taskToolNames.push('create_document_map', 'query_document_map', 'read_document_nodes')
   if ((needsRead || needsTextEdit || needsStructure) && !isFormattingOnly) taskToolNames.push('read_range')
   if (needsTextEdit)
     taskToolNames.push(
@@ -445,6 +464,11 @@ function getActiveTools(taskText = '') {
   }
   if (isConfirmation && !hasPendingFormatRequest) {
     for (const name of lastAgentToolNames.value) {
+      if (
+        hasScopedDocumentMapTarget &&
+        ['create_document_map', 'query_document_map', 'read_document_nodes'].includes(name)
+      )
+        continue
       if (!taskToolNames.includes(name)) taskToolNames.push(name)
     }
   }
@@ -833,12 +857,13 @@ You are a highly skilled Microsoft Word Expert Agent. Your goal is to assist use
 2. **Simple formatting executes immediately**: for a low-risk formatting request, call format_document_selection in the same turn and report its verification. The task pane keeps a restore snapshot. Do not ask for confirmation unless the user explicitly requests a preview.
 3. **Explicit preview remains two-phase**: if the user asks to see a plan or wait for confirmation, call propose_format_patch, show only the actual returned changes, and end the turn. On a later confirmation, call apply_format_patch with the exact active formatId. Do not ask twice or create a replacement proposal.
 4. **Multi-location text edits use PatchSet**: for two or more document locations, call propose_document_patch_set with targetText and context, present every returned operation, then call apply_document_patch_set only after the user reviews the items. Never choose the first match when a target is ambiguous.
+   For long-document or section requests, call create_document_map first, use query_document_map and read_document_nodes to narrow the scope, and pass mapId plus targetNodeId when creating a PatchSet. If the user already provides mapId and nodeId/targetNodeId, reuse them directly and call propose_document_patch_set; do not rebuild the map or read the node unless the user explicitly asks for its content.
 5. **Never invent IDs or errors**: use only IDs and errors returned by tools. If no tool was called, state that nothing executed; never guess an API, permission, window, or runtime error.
 6. **Minimal formatting delta**: include only formatting fields the user explicitly requested. Omit every unspecified field; never reset it to a presumed default, and never claim an unspecified font, color, alignment, spacing, bold, italic, or underline value will be preserved by setting it.
 7. **Formatting units**: 字号 → fontSize in points (12 = 12号); 1.5 倍行距 → lineSpacingMultiple: 1.5; 段后间距 → spaceAfter in points; 两端对齐 → alignment: 'Justified'.
 8. **Accuracy**: Report completion only from the real tool result and its verification fields.
-8. **Conciseness**: Provide brief, helpful explanations of your actions.
-9. **Language**: You must communicate entirely in ${lang}.
+9. **Conciseness**: Provide brief, helpful explanations of your actions.
+10. **Language**: You must communicate entirely in ${lang}.
 
 # Safety
 Do not perform destructive actions (like clearing the whole document) unless explicitly instructed.
@@ -1006,23 +1031,11 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
         scrollToBottom()
       },
       onToolCall: (toolName: string, _args: any) => {
-        // Show tool call in UI
-        const lastIndex = history.value.length - 1
-        const currentContent = getMessageText(history.value[lastIndex])
-        history.value[lastIndex] = new AIMessage(currentContent + `\n\n🔧 Calling tool: ${toolName}...`)
-        scrollToBottom()
+        // Tool activity is tracked separately from chat content.
+        void toolName
       },
       onToolResult: (toolName: string, result: string) => {
         toolEvidence.push({ name: toolName, result })
-        // Update with tool result
-        const lastIndex = history.value.length - 1
-        const currentContent = getMessageText(history.value[lastIndex])
-        const updatedContent = currentContent.replace(
-          `🔧 Calling tool: ${toolName}...`,
-          `✅ Tool ${toolName} completed`,
-        )
-        history.value[lastIndex] = new AIMessage(updatedContent)
-        scrollToBottom()
       },
     })
 
@@ -1248,7 +1261,7 @@ const getMessageText = (msg: Message): string => {
 const cleanMessageText = (msg: Message): string => {
   const raw = getMessageText(msg)
   const regex = new RegExp(`${THINK_TAG}[\\s\\S]*?${THINK_TAG_END}`, 'g')
-  return raw.replace(regex, '').trim()
+  return stripToolActivity(raw.replace(regex, ''))
 }
 
 const splitThinkSegments = (text: string): RenderSegment[] => {
@@ -1288,7 +1301,7 @@ const splitThinkSegments = (text: string): RenderSegment[] => {
 }
 
 const renderSegments = (msg: Message): RenderSegment[] => {
-  const raw = getMessageText(msg)
+  const raw = stripToolActivity(getMessageText(msg))
   return splitThinkSegments(raw)
 }
 

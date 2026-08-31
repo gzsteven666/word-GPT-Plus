@@ -19,6 +19,8 @@ export interface PatchOperationInput {
   replacementText: string
   beforeContext?: string
   afterContext?: string
+  mapId?: string
+  targetNodeId?: string
 }
 
 export interface DocumentPatchOperation extends PatchOperationInput {

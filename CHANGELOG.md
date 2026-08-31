@@ -1,3 +1,10 @@
+## 2.6.0
+
+* Add DocumentMap v1 for deterministic heading and paragraph nodes with bounded previews.
+* Add map query and node reads with stale document and text-hash protection.
+* Scope PatchSet targeting to stable map nodes while preserving the legacy single-patch APIs.
+* Keep protected-object availability explicit and reject unsafe or stale node-scoped edits before writing.
+
 ## 2.5.0
 
 * Add reviewable multi-location text PatchSets with per-item approval.

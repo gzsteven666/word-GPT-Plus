@@ -41,6 +41,12 @@ assert.deepEqual(
 
 assert.equal(createTaskTools([]).length, 0)
 
+const documentMapTools = createTaskTools(['create_document_map', 'query_document_map', 'read_document_nodes'])
+assert.deepEqual(
+  documentMapTools.map(tool => tool.name),
+  ['create_document_map', 'query_document_map', 'read_document_nodes'],
+)
+
 // Shared state survives across createTaskTools calls (cross-turn proposals).
 const sharedState = createTaskToolState()
 const firstInstance = createTaskTools(['propose_document_patch'], undefined, sharedState)
@@ -54,6 +60,7 @@ assert.equal(sharedState.appliedTextChanges.size, 0)
 assert.equal(sharedState.formatRequests.size, 0)
 assert.equal(sharedState.activeFormatRequestId, null)
 assert.equal(sharedState.appliedFormatRequests.size, 0)
+assert.equal(sharedState.documentMaps.size, 0)
 
 // Fresh states are independent.
 const freshState = createTaskToolState()

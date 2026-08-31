@@ -236,6 +236,7 @@
   "systemPromptPlaceholder": "请输入角色设定提示词",
   "temperature": "Temperature",
   "testConnection": "测试连接",
+  "thinking": "思考中…",
   "toolCapability": "工具调用",
   "tools": "工具",
   "translate": "翻译",

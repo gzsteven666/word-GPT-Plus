@@ -233,6 +233,7 @@
   "systemPromptPlaceholder": "Please input system prompt",
   "temperature": "Temperature",
   "testConnection": "Test connection",
+  "thinking": "Thinking…",
   "toolCapability": "Tool calling",
   "tools": "Tools",
   "translate": "Translate",

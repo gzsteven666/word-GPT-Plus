@@ -1,4 +1,6 @@
+import { assertDocumentMapCurrent } from '@/api/documentMapRuntime'
 import { AppError } from '@/api/errors'
+import { DocumentMap, getDocumentMapNode } from '@/utils/documentMap'
 import {
   acceptPatchOperation,
   createDocumentPatchSet,
@@ -48,8 +50,25 @@ const rangeSnapshot = async (context: Word.RequestContext, range: RangeLike) => 
 const resolveCandidate = async (
   context: Word.RequestContext,
   input: PatchOperationInput,
+  map?: DocumentMap,
 ): Promise<{ range: Word.Range; text: string; ooxml: string }> => {
-  const results = context.document.body.search(input.targetText, { matchCase: true, matchWholeWord: false })
+  let searchScope: Word.Range | undefined
+  if (input.targetNodeId) {
+    if (!map || input.mapId !== map.id)
+      throw new AppError('DOCUMENT_CONFLICT', 'A document map is required for node-scoped patching')
+    const node = getDocumentMapNode(map, input.targetNodeId)
+    if (!node) throw new AppError('DOCUMENT_CONFLICT', `Document map node is not available: ${input.targetNodeId}`)
+    const paragraphs = context.document.body.paragraphs
+    paragraphs.load('items')
+    await context.sync()
+    const paragraph = paragraphs.items[node.order]
+    if (!paragraph) throw new AppError('DOCUMENT_CONFLICT', `Document map node moved: ${input.targetNodeId}`)
+    searchScope = paragraph.getRange('Content')
+  }
+  const results = (searchScope || context.document.body).search(input.targetText, {
+    matchCase: true,
+    matchWholeWord: false,
+  })
   results.load('items')
   await context.sync()
   const candidates = results.items as Word.Range[]
@@ -94,12 +113,19 @@ const rejectOverlaps = async (context: Word.RequestContext, ranges: Word.Range[]
   }
 }
 
-export const proposeDocumentPatchSet = async (inputs: PatchOperationInput[]): Promise<DocumentPatchSet> =>
+export const proposeDocumentPatchSet = async (
+  inputs: PatchOperationInput[],
+  documentMap?: DocumentMap,
+): Promise<DocumentPatchSet> =>
   Word.run(async context => {
+    if (inputs.some(input => input.targetNodeId)) {
+      if (!documentMap) throw new AppError('DOCUMENT_CONFLICT', 'A document map is required for node-scoped patching')
+      await assertDocumentMapCurrent(context, documentMap)
+    }
     const patchSet = createDocumentPatchSet(inputs)
     const resolved: { range: Word.Range; operation: DocumentPatchOperation; control?: Word.ContentControl }[] = []
     for (const operation of patchSet.operations) {
-      const candidate = await resolveCandidate(context, operation)
+      const candidate = await resolveCandidate(context, operation, documentMap)
       const protectedObjects = getProtectedObjects(candidate.ooxml)
       if (protectedObjects.length > 0)
         throw new AppError('NON_TEXT_OBJECTS', `Target contains protected objects: ${protectedObjects.join(', ')}`)
