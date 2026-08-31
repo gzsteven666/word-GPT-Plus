@@ -115,7 +115,7 @@
                 <CustomInput
                   v-model.number="draft.agentMaxIterations"
                   :title="t('agentMaxIterationsLabel')"
-                  placeholder="25"
+                  placeholder="50"
                   input-type="number"
                   min="1"
                   max="500"

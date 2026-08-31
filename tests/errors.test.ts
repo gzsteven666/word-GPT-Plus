@@ -7,6 +7,8 @@ assert.equal(classifyError({ status: 429 }).code, 'RATE_LIMITED')
 assert.equal(classifyError(new TypeError('Failed to fetch')).code, 'CORS_BLOCKED')
 assert.equal(classifyError(new Error('Repeated identical tool call detected')).code, 'AGENT_LOOP')
 assert.equal(classifyError(new Error('The selection changed before the edit was applied')).code, 'DOCUMENT_CONFLICT')
+assert.equal(classifyError(new Error('maximum context length exceeded')).code, 'CONTEXT_TOO_LARGE')
+assert.equal(classifyError({ status: 413 }).code, 'CONTEXT_TOO_LARGE')
 
 const sanitized = sanitizeForLog({ apiKey: 'secret-value', authorization: 'Bearer secret-value', count: 2 }) as Record<
   string,

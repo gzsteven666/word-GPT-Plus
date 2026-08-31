@@ -1,3 +1,8 @@
+## 2.6.1
+
+* Guard oversized chat histories before sending a provider request and guide users to start a new chat.
+* Classify provider context-length and HTTP 413 failures with a clear, localized message.
+
 ## 2.6.0
 
 * Add DocumentMap v1 for deterministic heading and paragraph nodes with bounded previews.
@@ -382,4 +387,3 @@
 * **custom:** add support of web api using access token ([4faa1bb](https://github.com/Kuingsmile/word-GPT-Plus/commit/4faa1bb))
 * **custom:** fix docs ([6010124](https://github.com/Kuingsmile/word-GPT-Plus/commit/6010124))
 * **custom:** update README ([77ddaa8](https://github.com/Kuingsmile/word-GPT-Plus/commit/77ddaa8))
-

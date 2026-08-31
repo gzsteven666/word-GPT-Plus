@@ -338,6 +338,7 @@ import SingleSelect from '@/components/SingleSelect.vue'
 import CheckPointsPage from '@/pages/checkPointsPage.vue'
 import { checkAuth } from '@/utils/common'
 import { buildInPrompt, getBuiltInPrompt } from '@/utils/constant'
+import { exceedsContextBudget } from '@/utils/conversationBudget'
 import { hasDocumentMapTargetReference, isDocumentMapIntent } from '@/utils/documentMap'
 import { acceptPatchOperation, DocumentPatchSet, rejectPatchOperation } from '@/utils/documentPatch'
 import { localStorageKey } from '@/utils/enum'
@@ -1000,10 +1001,19 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
 
   history.value.push(new AIMessage(''))
 
+  if (exceedsContextBudget(finalMessages)) {
+    errorIssue.value = 'CONTEXT_TOO_LARGE'
+    history.value[history.value.length - 1] = new AIMessage(t('CONTEXT_TOO_LARGE'))
+    messageUtil.error(t('CONTEXT_TOO_LARGE'))
+    errorIssue.value = null
+    await scrollToBottom()
+    return
+  }
+
   // Use agent mode with tools if enabled
   if (isAgentMode) {
     const agentIterations =
-      provider === 'official' ? activeProfile.value?.agentMaxIterations || 25 : settings.agentMaxIterations
+      provider === 'official' ? activeProfile.value?.agentMaxIterations || 50 : settings.agentMaxIterations
 
     await getAgentResponse({
       ...currentConfig,
@@ -1058,6 +1068,8 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
   }
 
   if (errorIssue.value) {
+    const errorMessage = typeof errorIssue.value === 'string' ? t(errorIssue.value) : t('somethingWentWrong')
+    history.value[history.value.length - 1] = new AIMessage(errorMessage)
     if (typeof errorIssue.value === 'string') {
       messageUtil.error(t(errorIssue.value))
     } else {

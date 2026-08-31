@@ -8,6 +8,7 @@ export type AppErrorCode =
   | 'REQUEST_TIMEOUT'
   | 'AGENT_LOOP'
   | 'AGENT_BUDGET'
+  | 'CONTEXT_TOO_LARGE'
   | 'DOCUMENT_CONFLICT'
   | 'NON_TEXT_OBJECTS'
   | 'WORD_API_UNSUPPORTED'
@@ -67,6 +68,14 @@ export const classifyError = (error: unknown, endpoint = ''): AppError => {
   }
   if (status === 404 || /model.*(not found|does not exist)|unknown model/i.test(normalized)) {
     return new AppError('MODEL_NOT_FOUND', 'The selected model was not found', { status, endpoint })
+  }
+  if (
+    status === 413 ||
+    /context(?: length| window)?|maximum.*tokens?|token limit|too many tokens|request too large|payload too large/i.test(
+      normalized,
+    )
+  ) {
+    return new AppError('CONTEXT_TOO_LARGE', 'The conversation context is too large', { status, endpoint })
   }
   if (status === 429 || /rate.?limit|too many requests|quota/i.test(normalized)) {
     return new AppError('RATE_LIMITED', 'The provider rate limit or quota was reached', {

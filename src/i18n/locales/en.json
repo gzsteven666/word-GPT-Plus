@@ -60,6 +60,7 @@
   "connected": "Connected",
   "connectionCorsOrNetworkError": "Network or CORS error. Check whether the endpoint allows access from a Word add-in.",
   "connectionSuccessDetail": "Connected · {duration} ms · {count} models found",
+  "CONTEXT_TOO_LARGE": "This chat is too long. Start a new chat and try again.",
   "copied": "Copied to clipboard",
   "copyNewText": "Copy new text",
   "copyToClipboard": "Copy",

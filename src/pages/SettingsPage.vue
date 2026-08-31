@@ -89,7 +89,7 @@
               <CustomInput
                 v-model.number="settingForm.agentMaxIterations"
                 :title="$t('agentMaxIterationsLabel')"
-                placeholder="25"
+                placeholder="50"
                 type="number"
                 :min="1"
                 :max="500"

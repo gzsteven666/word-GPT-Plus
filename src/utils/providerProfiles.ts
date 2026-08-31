@@ -128,7 +128,7 @@ const createProfileFromTemplate = (template: ProviderTemplate): ProviderProfile 
     temperature: 0.7,
     maxTokens: 0,
     timeoutMs: 60000,
-    agentMaxIterations: 25,
+    agentMaxIterations: 50,
   }
 }
 
@@ -150,7 +150,7 @@ const createLegacyProfile = (): ProviderProfile => {
     maxTokens:
       Number(localStorage.getItem('maxTokens') || 0) === 800 ? 0 : Number(localStorage.getItem('maxTokens') || 0),
     timeoutMs: 60000,
-    agentMaxIterations: Number(localStorage.getItem('agentMaxIterations') || 25),
+    agentMaxIterations: Number(localStorage.getItem('agentMaxIterations') || 50),
   }
 }
 

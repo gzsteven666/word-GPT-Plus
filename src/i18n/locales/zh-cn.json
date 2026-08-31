@@ -60,6 +60,7 @@
   "connected": "已连接",
   "connectionCorsOrNetworkError": "网络或 CORS 错误，请检查接口是否允许从 Word 加载项访问",
   "connectionSuccessDetail": "连接成功 · {duration} ms · 获取到 {count} 个模型",
+  "CONTEXT_TOO_LARGE": "聊天记录过长，请点击“新建会话”后重试",
   "copied": "已复制",
   "copyNewText": "复制新文本",
   "copyToClipboard": "复制",
