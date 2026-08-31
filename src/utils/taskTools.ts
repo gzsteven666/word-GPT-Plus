@@ -1,6 +1,12 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 
+import {
+  applyDocumentPatchSet,
+  proposeDocumentPatchSet,
+  releaseDocumentPatchSetAnchors,
+  verifyDocumentPatchSet,
+} from '@/api/documentPatchRuntime'
 import { AppError } from '@/api/errors'
 import {
   AppliedTextChange,
@@ -15,6 +21,7 @@ import {
   restoreTextChange,
   verifyTextChange,
 } from '@/api/safeEdit'
+import { DocumentPatchSet, PatchOperationInput } from '@/utils/documentPatch'
 import { buildTextDiff, hashText, TextChangeProposal } from '@/utils/textProposal'
 
 export type TaskToolName =
@@ -22,6 +29,9 @@ export type TaskToolName =
   | 'read_range'
   | 'propose_document_patch'
   | 'apply_document_patch'
+  | 'propose_document_patch_set'
+  | 'apply_document_patch_set'
+  | 'verify_document_patch_set'
   | 'propose_format_patch'
   | 'apply_format_patch'
   | 'format_document_selection'
@@ -50,6 +60,7 @@ export interface TaskToolState {
   formatRequests: Map<string, FormatRequest>
   activeFormatRequestId: string | null
   appliedFormatRequests: Map<string, FormatRequest>
+  patchSets: Map<string, DocumentPatchSet>
 }
 
 export const createTaskToolState = (): TaskToolState => ({
@@ -58,12 +69,15 @@ export const createTaskToolState = (): TaskToolState => ({
   formatRequests: new Map(),
   activeFormatRequestId: null,
   appliedFormatRequests: new Map(),
+  patchSets: new Map(),
 })
 
 export interface TaskToolSecurity {
   requestTextChangeApproval?: (proposal: TextChangeProposal) => Promise<boolean>
   requestSensitiveDataApproval?: (scope: string) => Promise<boolean>
+  requestPatchSetApproval?: (patchSet: DocumentPatchSet) => Promise<boolean>
   onTextChangeApplied?: (change: AppliedTextChange) => void
+  onPatchSetApplied?: (patchSet: DocumentPatchSet) => void
   onFormatApplied?: (request: FormatRequest) => void
   allowedFormatFields?: string[]
 }
@@ -471,6 +485,99 @@ export const createTaskTools = (
           description:
             'Apply a previously proposed patch only after explicit user approval. The operation is guarded by the original selection hash and proposal ID.',
           schema: z.object({ proposalId: z.string().describe('The proposalId returned by propose_document_patch') }),
+        },
+      ),
+    )
+  }
+
+  if (shouldEnable('propose_document_patch_set')) {
+    tools.push(
+      tool(
+        async input => {
+          const args = input as { operations: PatchOperationInput[] }
+          const patchSet = await proposeDocumentPatchSet(args.operations)
+          state.patchSets.set(patchSet.id, patchSet)
+          return JSON.stringify({
+            patchSetId: patchSet.id,
+            status: patchSet.status,
+            operations: patchSet.operations.map(operation => ({
+              operationId: operation.id,
+              type: operation.type,
+              beforeText: operation.beforeText,
+              afterText: operation.replacementText,
+              risk: operation.risk,
+              status: operation.status,
+              diff: buildTextDiff(operation.beforeText, operation.replacementText),
+            })),
+          })
+        },
+        {
+          name: 'propose_document_patch_set',
+          description:
+            'Create a multi-location text PatchSet for Word. Each target must be uniquely identified by targetText and optional beforeContext/afterContext. This creates hidden anchors but does not change visible text. Present every operation for review before calling apply_document_patch_set.',
+          schema: z.object({
+            operations: z
+              .array(
+                z.object({
+                  type: z.enum(['replace', 'delete', 'insert_before', 'insert_after']),
+                  targetText: z.string().min(1),
+                  replacementText: z.string(),
+                  beforeContext: z.string().optional(),
+                  afterContext: z.string().optional(),
+                }),
+              )
+              .min(1),
+          }),
+        },
+      ),
+    )
+  }
+
+  if (shouldEnable('apply_document_patch_set')) {
+    tools.push(
+      tool(
+        async input => {
+          const args = input as { patchSetId: string }
+          const patchSet = state.patchSets.get(args.patchSetId)
+          if (!patchSet) throw new AppError('REQUEST_FAILED', 'The PatchSet was not found or has expired')
+          if (patchSet.status === 'applied')
+            return JSON.stringify({ patchSetId: patchSet.id, status: 'already_applied', idempotent: true })
+          if (!security?.requestPatchSetApproval)
+            throw new AppError('REQUEST_FAILED', 'A user approval handler is required before applying a PatchSet')
+          if (!(await security.requestPatchSetApproval(patchSet))) {
+            patchSet.status = 'cancelled'
+            await releaseDocumentPatchSetAnchors(patchSet)
+            return JSON.stringify({ patchSetId: patchSet.id, status: 'cancelled' })
+          }
+          const applied = await applyDocumentPatchSet(patchSet)
+          state.patchSets.set(applied.id, applied)
+          security.onPatchSetApplied?.(applied)
+          return JSON.stringify({ patchSetId: applied.id, status: applied.status, idempotent: false })
+        },
+        {
+          name: 'apply_document_patch_set',
+          description:
+            'Apply only the accepted operations in a previously proposed PatchSet after explicit per-item user review. All accepted targets are preflight-checked before any write; failures trigger compensating rollback.',
+          schema: z.object({ patchSetId: z.string() }),
+        },
+      ),
+    )
+  }
+
+  if (shouldEnable('verify_document_patch_set')) {
+    tools.push(
+      tool(
+        async input => {
+          const args = input as { patchSetId: string }
+          const patchSet = state.patchSets.get(args.patchSetId)
+          if (!patchSet) throw new AppError('REQUEST_FAILED', 'The PatchSet was not found or has expired')
+          return JSON.stringify(await verifyDocumentPatchSet(patchSet))
+        },
+        {
+          name: 'verify_document_patch_set',
+          description:
+            'Verify that every applied operation in a PatchSet still matches its applied text and OOXML hashes.',
+          schema: z.object({ patchSetId: z.string() }),
         },
       ),
     )

@@ -267,6 +267,7 @@
     @cancel="cancelPendingProposal"
     @copied="messageUtil.success(t('copied'))"
   />
+  <PatchSetReviewDialog :patch-set="pendingPatchSet" @apply="applyPendingPatchSet" @cancel="cancelPendingPatchSet" />
   <ConfirmationDialog
     :open="pendingConfirmation !== null"
     :title="pendingConfirmation?.title || ''"
@@ -304,6 +305,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { type CheckpointTuple, IndexedDBSaver } from '@/api/checkpoints'
+import { releaseDocumentPatchSetAnchors, restoreDocumentPatchSet } from '@/api/documentPatchRuntime'
 import { classifyError } from '@/api/errors'
 import {
   AppliedTextChange,
@@ -318,10 +320,12 @@ import { getAgentResponse, getChatResponse } from '@/api/union'
 import ConfirmationDialog from '@/components/ConfirmationDialog.vue'
 import CustomButton from '@/components/CustomButton.vue'
 import EditProposalDialog from '@/components/EditProposalDialog.vue'
+import PatchSetReviewDialog from '@/components/PatchSetReviewDialog.vue'
 import SingleSelect from '@/components/SingleSelect.vue'
 import CheckPointsPage from '@/pages/checkPointsPage.vue'
 import { checkAuth } from '@/utils/common'
 import { buildInPrompt, getBuiltInPrompt } from '@/utils/constant'
+import { acceptPatchOperation, DocumentPatchSet, rejectPatchOperation } from '@/utils/documentPatch'
 import { localStorageKey } from '@/utils/enum'
 import { createGeneralTools, GeneralToolName } from '@/utils/generalTools'
 import { message as messageUtil } from '@/utils/message'
@@ -389,9 +393,10 @@ function getActiveTools(taskText = '') {
   const instruction = extractUserInstruction(taskText)
   const normalized = instruction.toLowerCase()
   const needsFormat = /格式|排版|美化|字体|字号|行距|对齐|style|format|layout|beautify/i.test(normalized)
-  const needsTextEdit = /改写|润色|替换|删除|插入|添加|追加|rewrite|replace|delete|insert|revise|edit text/i.test(
-    normalized,
-  )
+  const needsTextEdit =
+    /改写|润色|替换|删除|插入|添加|追加|rewrite|replace|delete|insert|revise|edit text|patch\s*set|patchset|documentpatchset/i.test(
+      normalized,
+    )
   const needsRead = /读取|查看|阅读|总结|摘要|read|inspect|summarize|summary/i.test(normalized)
   const needsWeb = /网页|网络|搜索|查资料|网址|web|search|url/i.test(normalized)
   const needsGeneral = needsWeb || /计算|日期|calculate|date/i.test(normalized)
@@ -400,6 +405,7 @@ function getActiveTools(taskText = '') {
   )
   const isConfirmation = isConfirmationIntent(instruction)
   const hasPendingTextProposal = taskToolState.textProposals.size > 0
+  const hasPendingPatchSet = [...taskToolState.patchSets.values()].some(patchSet => patchSet.status === 'pending')
   const hasPendingFormatRequest = taskToolState.activeFormatRequestId !== null
   const isFormattingOnly = needsFormat && !needsTextEdit
   const formatToolRoute = resolveFormatToolRoute(instruction, hasPendingFormatRequest)
@@ -409,7 +415,15 @@ function getActiveTools(taskText = '') {
 
   if (needsStructure && !isFormattingOnly) taskToolNames.push('read_document_structure')
   if ((needsRead || needsTextEdit || needsStructure) && !isFormattingOnly) taskToolNames.push('read_range')
-  if (needsTextEdit) taskToolNames.push('propose_document_patch', 'apply_document_patch', 'verify_patch')
+  if (needsTextEdit)
+    taskToolNames.push(
+      'propose_document_patch_set',
+      'apply_document_patch_set',
+      'verify_document_patch_set',
+      'propose_document_patch',
+      'apply_document_patch',
+      'verify_patch',
+    )
 
   // Low-risk formatting is reversible through the task-pane restore action, so
   // execute it in one verified tool call unless the user explicitly requests a preview.
@@ -425,6 +439,9 @@ function getActiveTools(taskText = '') {
 
   if (isConfirmation && !hasPendingFormatRequest && hasPendingTextProposal) {
     taskToolNames.push('apply_document_patch', 'verify_patch', 'read_range')
+  }
+  if (isConfirmation && !hasPendingFormatRequest && hasPendingPatchSet) {
+    taskToolNames.push('apply_document_patch_set', 'verify_document_patch_set', 'read_range')
   }
   if (isConfirmation && !hasPendingFormatRequest) {
     for (const name of lastAgentToolNames.value) {
@@ -443,6 +460,15 @@ function getActiveTools(taskText = '') {
       allowedFormatFields: inferRequestedFormatFields(instruction),
       onTextChangeApplied: change => {
         lastAppliedChange.value = { kind: 'text', change }
+      },
+      requestPatchSetApproval,
+      onPatchSetApplied: patchSet => {
+        const previous = lastAppliedChange.value
+        if (previous?.kind === 'patchSet') void releaseDocumentPatchSetAnchors(previous.patchSet).catch(() => undefined)
+        if (previous?.kind === 'text') void releaseTextChangeAnchor(previous.change.proposal).catch(() => undefined)
+        if (previous?.kind === 'format' && previous.request.anchorTag)
+          void releaseSelectionAnchor(previous.request.anchorTag).catch(() => undefined)
+        lastAppliedChange.value = { kind: 'patchSet', patchSet }
       },
       onFormatApplied: request => {
         lastAppliedChange.value = { kind: 'format', request }
@@ -506,9 +532,14 @@ const insertType = ref<insertTypes>('replace')
 
 const errorIssue = ref<boolean | string | null>(false)
 const pendingProposal = ref<TextChangeProposal | null>(null)
-type AppliedDocumentChange = { kind: 'text'; change: AppliedTextChange } | { kind: 'format'; request: FormatRequest }
+const pendingPatchSet = ref<DocumentPatchSet | null>(null)
+type AppliedDocumentChange =
+  | { kind: 'text'; change: AppliedTextChange }
+  | { kind: 'format'; request: FormatRequest }
+  | { kind: 'patchSet'; patchSet: DocumentPatchSet }
 const lastAppliedChange = ref<AppliedDocumentChange | null>(null)
 const agentApprovalResolver = ref<((accepted: boolean) => void) | null>(null)
+const patchSetApprovalResolver = ref<((accepted: boolean) => void) | null>(null)
 const pendingConfirmation = ref<{ title: string; message: string } | null>(null)
 let pendingConfirmationResolver: ((accepted: boolean) => void) | null = null
 
@@ -801,10 +832,11 @@ You are a highly skilled Microsoft Word Expert Agent. Your goal is to assist use
 1. **Tool First**: If a request requires document modification or inspection or web search and fetch, you MUST use the available tool. A text-only answer never completes a document action.
 2. **Simple formatting executes immediately**: for a low-risk formatting request, call format_document_selection in the same turn and report its verification. The task pane keeps a restore snapshot. Do not ask for confirmation unless the user explicitly requests a preview.
 3. **Explicit preview remains two-phase**: if the user asks to see a plan or wait for confirmation, call propose_format_patch, show only the actual returned changes, and end the turn. On a later confirmation, call apply_format_patch with the exact active formatId. Do not ask twice or create a replacement proposal.
-4. **Never invent IDs or errors**: use only IDs and errors returned by tools. If no tool was called, state that nothing executed; never guess an API, permission, window, or runtime error.
-5. **Minimal formatting delta**: include only formatting fields the user explicitly requested. Omit every unspecified field; never reset it to a presumed default, and never claim an unspecified font, color, alignment, spacing, bold, italic, or underline value will be preserved by setting it.
-6. **Formatting units**: 字号 → fontSize in points (12 = 12号); 1.5 倍行距 → lineSpacingMultiple: 1.5; 段后间距 → spaceAfter in points; 两端对齐 → alignment: 'Justified'.
-7. **Accuracy**: Report completion only from the real tool result and its verification fields.
+4. **Multi-location text edits use PatchSet**: for two or more document locations, call propose_document_patch_set with targetText and context, present every returned operation, then call apply_document_patch_set only after the user reviews the items. Never choose the first match when a target is ambiguous.
+5. **Never invent IDs or errors**: use only IDs and errors returned by tools. If no tool was called, state that nothing executed; never guess an API, permission, window, or runtime error.
+6. **Minimal formatting delta**: include only formatting fields the user explicitly requested. Omit every unspecified field; never reset it to a presumed default, and never claim an unspecified font, color, alignment, spacing, bold, italic, or underline value will be preserved by setting it.
+7. **Formatting units**: 字号 → fontSize in points (12 = 12号); 1.5 倍行距 → lineSpacingMultiple: 1.5; 段后间距 → spaceAfter in points; 两端对齐 → alignment: 'Justified'.
+8. **Accuracy**: Report completion only from the real tool result and its verification fields.
 8. **Conciseness**: Provide brief, helpful explanations of your actions.
 9. **Language**: You must communicate entirely in ${lang}.
 
@@ -1084,6 +1116,33 @@ const requestAgentTextChangeApproval = (proposal: TextChangeProposal): Promise<b
     agentApprovalResolver.value = resolve
   })
 
+const requestPatchSetApproval = (patchSet: DocumentPatchSet): Promise<boolean> =>
+  new Promise(resolve => {
+    pendingPatchSet.value = patchSet
+    patchSetApprovalResolver.value = resolve
+  })
+
+const applyPendingPatchSet = (operationIds: string[]) => {
+  const patchSet = pendingPatchSet.value
+  const resolve = patchSetApprovalResolver.value
+  if (!patchSet || !resolve) return
+  const accepted = new Set(operationIds)
+  patchSet.operations.forEach(operation => {
+    if (accepted.has(operation.id)) acceptPatchOperation(patchSet, operation.id)
+    else rejectPatchOperation(patchSet, operation.id)
+  })
+  pendingPatchSet.value = null
+  patchSetApprovalResolver.value = null
+  resolve(true)
+}
+
+const cancelPendingPatchSet = () => {
+  const resolve = patchSetApprovalResolver.value
+  pendingPatchSet.value = null
+  patchSetApprovalResolver.value = null
+  resolve?.(false)
+}
+
 const resolvePendingConfirmation = (accepted: boolean) => {
   const resolve = pendingConfirmationResolver
   pendingConfirmationResolver = null
@@ -1111,13 +1170,17 @@ const requestExternalNetworkApproval = async (toolName: GeneralToolName, args: u
 const requestSensitiveDataApproval = async (scope: string) =>
   requestPaneConfirmation(t('documentDataApprovalTitle'), t('documentDataConfirm', { scope }))
 
-onBeforeUnmount(() => resolvePendingConfirmation(false))
+onBeforeUnmount(() => {
+  resolvePendingConfirmation(false)
+  cancelPendingPatchSet()
+})
 
 const restoreLastEdit = async () => {
   if (!lastAppliedChange.value) return
   try {
     if (lastAppliedChange.value.kind === 'text') await restoreTextChange(lastAppliedChange.value.change)
-    else await restoreFormatRequest(lastAppliedChange.value.request)
+    else if (lastAppliedChange.value.kind === 'format') await restoreFormatRequest(lastAppliedChange.value.request)
+    else await restoreDocumentPatchSet(lastAppliedChange.value.patchSet)
     lastAppliedChange.value = null
     messageUtil.success(t('editRestored'))
   } catch (error) {
