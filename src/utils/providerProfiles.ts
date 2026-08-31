@@ -231,6 +231,7 @@ export const useProviderProfiles = () => {
 
   const removeProfile = (id: string) => {
     if (profiles.value.length <= 1) return false
+    if (!profiles.value.some(profile => profile.id === id)) return false
     profiles.value = profiles.value.filter(profile => profile.id !== id)
     if (activeProfileId.value === id) setActiveProfile(profiles.value[0].id)
     persistProfiles()

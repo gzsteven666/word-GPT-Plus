@@ -261,6 +261,15 @@
       @close="pickerOpen = false"
       @confirm="addFetchedModels"
     />
+    <ConfirmationDialog
+      :open="pendingConfirmation !== null"
+      :title="pendingConfirmation?.title || ''"
+      :message="pendingConfirmation?.message || ''"
+      :confirm-label="t('confirm')"
+      :cancel-label="t('cancel')"
+      @confirm="resolvePendingConfirmation(true)"
+      @cancel="resolvePendingConfirmation(false)"
+    />
   </div>
 </template>
 
@@ -270,6 +279,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { fetchModelCatalog, ModelCatalogError } from '@/api/modelCatalog'
+import ConfirmationDialog from '@/components/ConfirmationDialog.vue'
 import CustomButton from '@/components/CustomButton.vue'
 import CustomInput from '@/components/CustomInput.vue'
 import ModelPickerDialog from '@/components/ModelPickerDialog.vue'
@@ -301,6 +311,7 @@ const connectionOk = ref(false)
 const pickerOpen = ref(false)
 const catalogModels = ref<string[]>([])
 const manualModel = ref('')
+const pendingConfirmation = ref<{ title: string; message: string; action: () => void } | null>(null)
 
 const forbiddenHeaders = new Set(['host', 'origin', 'content-length', 'cookie'])
 const capabilityItems: { key: ModelCapability; label: string; icon: any }[] = [
@@ -377,19 +388,32 @@ const runCatalogRequest = async () => {
   }
 }
 
+const requestConfirmation = (message: string, action: () => void) => {
+  pendingConfirmation.value = { title: t('confirm'), message, action }
+}
+
+const resolvePendingConfirmation = (accepted: boolean) => {
+  const pending = pendingConfirmation.value
+  pendingConfirmation.value = null
+  if (accepted) pending?.action()
+}
+
 const selectProfile = (id: string) => {
-  if (dirty.value && !window.confirm(t('discardUnsavedChanges'))) return
-  setActiveProfile(id)
+  const select = () => setActiveProfile(id)
+  if (dirty.value) requestConfirmation(t('discardUnsavedChanges'), select)
+  else select()
 }
 
 const addProvider = () => {
-  if (dirty.value && !window.confirm(t('discardUnsavedChanges'))) return
-  addProfile(selectedTemplate.value)
+  const add = () => addProfile(selectedTemplate.value)
+  if (dirty.value) requestConfirmation(t('discardUnsavedChanges'), add)
+  else add()
 }
 
 const deleteProvider = () => {
-  if (!draft.value || !window.confirm(t('confirmDeleteProvider'))) return
-  removeProfile(draft.value.id)
+  if (!draft.value) return
+  const profileId = draft.value.id
+  requestConfirmation(t('confirmDeleteProvider'), () => removeProfile(profileId))
 }
 
 const saveProfile = () => {

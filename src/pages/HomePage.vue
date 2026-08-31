@@ -267,6 +267,15 @@
     @cancel="cancelPendingProposal"
     @copied="messageUtil.success(t('copied'))"
   />
+  <ConfirmationDialog
+    :open="pendingConfirmation !== null"
+    :title="pendingConfirmation?.title || ''"
+    :message="pendingConfirmation?.message || ''"
+    :confirm-label="t('confirm')"
+    :cancel-label="t('cancel')"
+    @confirm="resolvePendingConfirmation(true)"
+    @cancel="resolvePendingConfirmation(false)"
+  />
 </template>
 
 <script lang="ts" setup>
@@ -290,7 +299,7 @@ import {
   Square,
 } from 'lucide-vue-next'
 import { v4 as uuidv4 } from 'uuid'
-import { computed, nextTick, onBeforeMount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeMount, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
@@ -303,6 +312,7 @@ import {
   restoreTextChange,
 } from '@/api/safeEdit'
 import { getAgentResponse, getChatResponse } from '@/api/union'
+import ConfirmationDialog from '@/components/ConfirmationDialog.vue'
 import CustomButton from '@/components/CustomButton.vue'
 import EditProposalDialog from '@/components/EditProposalDialog.vue'
 import SingleSelect from '@/components/SingleSelect.vue'
@@ -490,6 +500,8 @@ const errorIssue = ref<boolean | string | null>(false)
 const pendingProposal = ref<TextChangeProposal | null>(null)
 const lastAppliedChange = ref<Awaited<ReturnType<typeof applyTextChangeProposal>> | null>(null)
 const agentApprovalResolver = ref<((accepted: boolean) => void) | null>(null)
+const pendingConfirmation = ref<{ title: string; message: string } | null>(null)
+let pendingConfirmationResolver: ((accepted: boolean) => void) | null = null
 
 const displayHistory = computed(() => {
   return history.value.filter(msg => !(msg instanceof SystemMessage))
@@ -651,6 +663,7 @@ function startNewChat() {
   threadId.value = uuidv4()
   customSystemPrompt.value = ''
   selectedPromptId.value = ''
+  resolvePendingConfirmation(false)
   adjustTextareaHeight()
 }
 
@@ -659,6 +672,7 @@ function stopGeneration() {
     abortController.value.abort()
     abortController.value = null
   }
+  resolvePendingConfirmation(false)
   loading.value = false
 }
 
@@ -1053,13 +1067,34 @@ const requestAgentTextChangeApproval = (proposal: TextChangeProposal): Promise<b
     agentApprovalResolver.value = resolve
   })
 
+const resolvePendingConfirmation = (accepted: boolean) => {
+  const resolve = pendingConfirmationResolver
+  pendingConfirmationResolver = null
+  pendingConfirmation.value = null
+  resolve?.(accepted)
+}
+
+const requestPaneConfirmation = (title: string, message: string): Promise<boolean> => {
+  resolvePendingConfirmation(false)
+  return new Promise(resolve => {
+    pendingConfirmation.value = { title, message }
+    pendingConfirmationResolver = resolve
+  })
+}
+
 const requestExternalNetworkApproval = async (toolName: GeneralToolName, args: unknown) => {
   const values = args as { query?: string; url?: string }
   const target = values.query || values.url || ''
-  return window.confirm(t('externalNetworkConfirm', { tool: toolName, target }))
+  return requestPaneConfirmation(
+    t('externalNetworkApprovalTitle'),
+    t('externalNetworkConfirm', { tool: toolName, target }),
+  )
 }
 
-const requestSensitiveDataApproval = async (scope: string) => window.confirm(t('documentDataConfirm', { scope }))
+const requestSensitiveDataApproval = async (scope: string) =>
+  requestPaneConfirmation(t('documentDataApprovalTitle'), t('documentDataConfirm', { scope }))
+
+onBeforeUnmount(() => resolvePendingConfirmation(false))
 
 const restoreLastEdit = async () => {
   if (!lastAppliedChange.value) return

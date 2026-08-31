@@ -69,7 +69,7 @@ assert.equal(getResolvedCapability(unknown, 'tools'), 'no')
 cycleCapabilityOverride(unknown, 'tools')
 assert.equal(getResolvedCapability(unknown, 'tools'), 'unknown')
 
-const { profiles, activeProfile } = useProviderProfiles()
+const { profiles, activeProfile, activeProfileId, addProfile, removeProfile, updateProfile } = useProviderProfiles()
 assert.equal(profiles.value.length, 1)
 assert.equal(activeProfile.value?.apiKey, 'legacy-key')
 assert.equal(activeProfile.value?.baseURL, 'https://api.example.com/v1')
@@ -81,5 +81,19 @@ const clonedProfile = cloneProviderProfile(reactiveProfile)
 assert.notEqual(clonedProfile, reactiveProfile)
 assert.equal(clonedProfile.apiKey, 'legacy-key')
 assert.deepEqual(clonedProfile.models, reactiveProfile.models)
+
+const originalProfileId = activeProfileId.value
+const cpaProfile = addProfile('custom')
+cpaProfile.name = 'cpa'
+updateProfile(cpaProfile)
+assert.equal(profiles.value.length, 2)
+assert.equal(activeProfile.value?.name, 'cpa')
+assert.equal(removeProfile(cpaProfile.id), true)
+assert.equal(profiles.value.length, 1)
+assert.equal(activeProfileId.value, originalProfileId)
+assert.equal(localStorage.getItem('activeProviderProfileId'), originalProfileId)
+assert.equal(removeProfile('missing-profile'), false)
+assert.equal(removeProfile(originalProfileId), false)
+assert.equal(profiles.value.length, 1)
 
 console.log('providerProfiles tests: PASS')
