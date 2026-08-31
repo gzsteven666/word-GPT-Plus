@@ -89,24 +89,25 @@ const byteLengthOfDataUrl = (dataUrl: string): number => {
   return Math.ceil((base64.length * 3) / 4)
 }
 
-export async function prepareImageAttachment(file: File): Promise<ImageAttachment> {
-  if (!SUPPORTED_IMAGE_TYPES.includes(file.type as (typeof SUPPORTED_IMAGE_TYPES)[number])) {
+const prepareImageDataUrlAttachment = async (
+  name: string,
+  originalDataUrl: string,
+  originalMimeType: string,
+): Promise<ImageAttachment> => {
+  if (!SUPPORTED_IMAGE_TYPES.includes(originalMimeType as (typeof SUPPORTED_IMAGE_TYPES)[number])) {
     throw new Error('IMAGE_TYPE_UNSUPPORTED')
   }
-  if (file.size > MAX_IMAGE_BYTES) throw new Error('IMAGE_TOO_LARGE')
-
-  const originalDataUrl = await readAsDataUrl(file)
   const image = await loadImage(originalDataUrl)
   let dataUrl = originalDataUrl
-  let mimeType = file.type as (typeof SUPPORTED_IMAGE_TYPES)[number]
+  let mimeType = originalMimeType as (typeof SUPPORTED_IMAGE_TYPES)[number]
 
   if (
-    file.size > MAX_IMAGE_PAYLOAD_BYTES ||
+    byteLengthOfDataUrl(originalDataUrl) > MAX_IMAGE_PAYLOAD_BYTES ||
     image.naturalWidth > MAX_IMAGE_DIMENSION ||
     image.naturalHeight > MAX_IMAGE_DIMENSION
   ) {
     // JPEG keeps the request bounded for PNG screenshots while preserving the selected image in memory only.
-    mimeType = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/webp'
+    mimeType = originalMimeType === 'image/jpeg' ? 'image/jpeg' : 'image/webp'
     let quality = 0.86
     do {
       dataUrl = canvasDataUrl(image, mimeType, quality)
@@ -116,7 +117,7 @@ export async function prepareImageAttachment(file: File): Promise<ImageAttachmen
   }
 
   return {
-    name: file.name,
+    name,
     mimeType,
     size: byteLengthOfDataUrl(dataUrl),
     width: image.naturalWidth,
@@ -124,3 +125,17 @@ export async function prepareImageAttachment(file: File): Promise<ImageAttachmen
     dataUrl,
   }
 }
+
+export async function prepareImageAttachment(file: File): Promise<ImageAttachment> {
+  if (!SUPPORTED_IMAGE_TYPES.includes(file.type as (typeof SUPPORTED_IMAGE_TYPES)[number])) {
+    throw new Error('IMAGE_TYPE_UNSUPPORTED')
+  }
+  if (file.size > MAX_IMAGE_BYTES) throw new Error('IMAGE_TOO_LARGE')
+  return prepareImageDataUrlAttachment(file.name, await readAsDataUrl(file), file.type)
+}
+
+export const prepareImageAttachmentFromDataUrl = (
+  name: string,
+  dataUrl: string,
+  mimeType: string,
+): Promise<ImageAttachment> => prepareImageDataUrlAttachment(name, dataUrl, mimeType)

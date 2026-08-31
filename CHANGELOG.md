@@ -1,3 +1,14 @@
+## 2.8.0
+
+* Read exactly one selected inline Word image in Ask mode and send it through the existing single-image vision pipeline.
+* Reject missing, ambiguous, unsupported, or unreadable Word image selections without modifying the document.
+* Keep Word image data out of chat history and checkpoints.
+
+## 2.7.0
+
+* Add single-image Ask mode input with PNG, JPEG, and WebP validation, resizing, compression, and vision capability guards.
+* Keep image payloads ephemeral and remove the attachment only after a successful response.
+
 ## 2.6.1
 
 * Guard oversized chat histories before sending a provider request and guide users to start a new chat.

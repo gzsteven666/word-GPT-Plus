@@ -279,6 +279,16 @@
               @change="selectImage"
             />
           </div>
+          <button
+            type="button"
+            class="flex items-center gap-1 border-none bg-transparent p-0 text-[10px] text-secondary hover:text-accent disabled:opacity-60"
+            :disabled="imageProcessing || loading || mode === 'agent'"
+            :title="mode === 'agent' ? $t('imageAgentUnsupported') : $t('attachWordImage')"
+            @click="selectWordImage"
+          >
+            <ImagePlus :size="13" />
+            <span>{{ $t('attachWordImage') }}</span>
+          </button>
           <span v-if="selectedImage">{{ selectedImage.width }}×{{ selectedImage.height }}</span>
         </div>
         <div class="flex justify-center gap-3 px-1">
@@ -371,6 +381,7 @@ import {
   restoreTextChange,
 } from '@/api/safeEdit'
 import { getAgentResponse, getChatResponse } from '@/api/union'
+import { readSelectedInlineImage, WordImageReadError } from '@/api/wordImageRuntime'
 import ConfirmationDialog from '@/components/ConfirmationDialog.vue'
 import CustomButton from '@/components/CustomButton.vue'
 import EditProposalDialog from '@/components/EditProposalDialog.vue'
@@ -389,6 +400,7 @@ import {
   getImageCapabilityGate,
   type ImageAttachment,
   prepareImageAttachment,
+  prepareImageAttachmentFromDataUrl,
   sanitizeHistoryMessage,
 } from '@/utils/imageInput'
 import { message as messageUtil } from '@/utils/message'
@@ -890,6 +902,44 @@ async function selectImage(event: Event) {
           ? 'imagePayloadTooLarge'
           : 'imageUnsupported'
     messageUtil.error(t(messageKey))
+  } finally {
+    imageProcessing.value = false
+  }
+}
+
+async function selectWordImage() {
+  if (mode.value === 'agent') {
+    messageUtil.error(t('imageAgentUnsupported'))
+    return
+  }
+
+  imageProcessing.value = true
+  try {
+    const wordImage = await readSelectedInlineImage()
+    const mimeType = /^data:(image\/(?:png|jpeg|webp));/i.exec(wordImage.dataUrl)?.[1]
+    if (!mimeType) throw new Error('IMAGE_TYPE_UNSUPPORTED')
+    selectedImage.value = await prepareImageAttachmentFromDataUrl('Word image', wordImage.dataUrl, mimeType)
+  } catch (error) {
+    if (error instanceof WordImageReadError) {
+      const messageKey =
+        error.code === 'WORD_IMAGE_NOT_SELECTED'
+          ? 'wordImageNotSelected'
+          : error.code === 'WORD_IMAGE_AMBIGUOUS'
+            ? 'wordImageAmbiguous'
+            : error.code === 'WORD_IMAGE_UNSUPPORTED'
+              ? 'wordImageUnsupported'
+              : 'wordImageReadFailed'
+      messageUtil.error(t(messageKey))
+    } else {
+      const code = error instanceof Error ? error.message : 'IMAGE_TYPE_UNSUPPORTED'
+      const messageKey =
+        code === 'IMAGE_PAYLOAD_TOO_LARGE'
+          ? 'imagePayloadTooLarge'
+          : code === 'IMAGE_TYPE_UNSUPPORTED'
+            ? 'imageUnsupported'
+            : 'wordImageReadFailed'
+      messageUtil.error(t(messageKey))
+    }
   } finally {
     imageProcessing.value = false
   }
