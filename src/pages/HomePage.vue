@@ -224,6 +224,21 @@
             @keydown.enter.exact.prevent="sendMessage"
             @input="adjustTextareaHeight"
           />
+          <div
+            v-if="selectedImage"
+            class="flex shrink-0 items-center gap-1 rounded border border-border-secondary bg-bg-secondary p-1"
+          >
+            <img :src="selectedImage.dataUrl" :alt="selectedImage.name" class="h-8 w-8 rounded object-cover" />
+            <span class="max-w-20 truncate text-[10px] text-secondary">{{ selectedImage.name }}</span>
+            <button
+              type="button"
+              class="flex h-5 w-5 items-center justify-center rounded border-none text-secondary hover:bg-danger/20 hover:text-danger"
+              :title="$t('removeImage')"
+              @click="removeImage"
+            >
+              <X :size="12" />
+            </button>
+          </div>
           <button
             v-if="loading"
             class="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-sm border-none bg-danger text-white"
@@ -236,11 +251,35 @@
             v-else
             class="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-sm border-none bg-accent text-white disabled:cursor-not-allowed disabled:bg-accent/50"
             title="Send"
-            :disabled="!userInput.trim()"
+            :disabled="!userInput.trim() || imageProcessing"
             @click="sendMessage"
           >
             <Send :size="18" />
           </button>
+        </div>
+        <div class="flex items-center justify-between px-1 text-[10px] text-secondary">
+          <div class="relative flex items-center">
+            <button
+              type="button"
+              tabindex="-1"
+              class="flex items-center gap-1 border-none bg-transparent p-0 text-[10px] text-secondary hover:text-accent disabled:opacity-60"
+              :disabled="imageProcessing || loading || mode === 'agent'"
+              :title="mode === 'agent' ? $t('imageAgentUnsupported') : $t('attachImage')"
+            >
+              <ImagePlus :size="13" />
+              <span>{{ imageProcessing ? $t('imageProcessing') : $t('attachImage') }}</span>
+            </button>
+            <input
+              ref="imageInput"
+              class="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              :aria-label="$t('attachImage')"
+              :disabled="imageProcessing || loading || mode === 'agent'"
+              @change="selectImage"
+            />
+          </div>
+          <span v-if="selectedImage">{{ selectedImage.width }}×{{ selectedImage.height }}</span>
         </div>
         <div class="flex justify-center gap-3 px-1">
           <label class="flex h-3.5 w-3.5 flex-1 cursor-pointer items-center gap-1 text-xs text-secondary">
@@ -304,6 +343,7 @@ import {
   FileText,
   Globe,
   History,
+  ImagePlus,
   MessageSquare,
   Plus,
   Send,
@@ -311,6 +351,7 @@ import {
   Sparkle,
   Sparkles,
   Square,
+  X,
 } from 'lucide-vue-next'
 import { v4 as uuidv4 } from 'uuid'
 import { computed, nextTick, onBeforeMount, onBeforeUnmount, ref, watch } from 'vue'
@@ -343,6 +384,13 @@ import { hasDocumentMapTargetReference, isDocumentMapIntent } from '@/utils/docu
 import { acceptPatchOperation, DocumentPatchSet, rejectPatchOperation } from '@/utils/documentPatch'
 import { localStorageKey } from '@/utils/enum'
 import { createGeneralTools, GeneralToolName } from '@/utils/generalTools'
+import {
+  buildEphemeralMultimodalMessage,
+  getImageCapabilityGate,
+  type ImageAttachment,
+  prepareImageAttachment,
+  sanitizeHistoryMessage,
+} from '@/utils/imageInput'
 import { message as messageUtil } from '@/utils/message'
 import { stripToolActivity } from '@/utils/messageText'
 import {
@@ -541,6 +589,9 @@ function loadSelectedPrompt() {
 const mode = useStorage(localStorageKey.chatMode, 'ask' as 'ask' | 'agent')
 const history = ref<Message[]>([])
 const userInput = ref('')
+const imageInput = ref<HTMLInputElement>()
+const selectedImage = ref<ImageAttachment | null>(null)
+const imageProcessing = ref(false)
 const loading = ref(false)
 const messagesContainer = ref<HTMLElement>()
 const inputTextarea = ref<HTMLTextAreaElement>()
@@ -728,6 +779,7 @@ function startNewChat() {
   threadId.value = uuidv4()
   customSystemPrompt.value = ''
   selectedPromptId.value = ''
+  selectedImage.value = null
   resolvePendingConfirmation(false)
   adjustTextareaHeight()
 }
@@ -756,10 +808,29 @@ async function scrollToBottom() {
 }
 
 async function sendMessage() {
-  if (!userInput.value.trim() || loading.value) return
+  if (!userInput.value.trim() || loading.value || imageProcessing.value) return
   if (!checkApiKey()) return
 
+  if (selectedImage.value) {
+    if (mode.value === 'agent') {
+      messageUtil.error(t('imageAgentUnsupported'))
+      return
+    }
+    const gate = getImageCapabilityGate(
+      activeModelProfile.value ? getResolvedCapability(activeModelProfile.value, 'vision') : 'unknown',
+    )
+    if (gate === 'blocked') {
+      messageUtil.error(t('imageVisionUnsupported'))
+      return
+    }
+    if (gate === 'unknown') {
+      messageUtil.error(t('imageVisionUnknown'))
+      return
+    }
+  }
+
   const userMessage = userInput.value.trim()
+  const imageForRequest = selectedImage.value
   userInput.value = ''
   adjustTextareaHeight()
 
@@ -783,9 +854,10 @@ async function sendMessage() {
 
   loading.value = true
   abortController.value = new AbortController()
+  let completed = false
 
   try {
-    await processChat(fullMessage, undefined)
+    completed = await processChat(fullMessage, undefined, imageForRequest)
   } catch (error: any) {
     if (error.name === 'AbortError') {
       messageUtil.info(t('generationStop'))
@@ -796,7 +868,35 @@ async function sendMessage() {
   } finally {
     loading.value = false
     abortController.value = null
+    if (completed && selectedImage.value === imageForRequest) selectedImage.value = null
   }
+}
+
+async function selectImage(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+
+  imageProcessing.value = true
+  try {
+    selectedImage.value = await prepareImageAttachment(file)
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'IMAGE_TYPE_UNSUPPORTED'
+    const messageKey =
+      code === 'IMAGE_TOO_LARGE'
+        ? 'imageTooLarge'
+        : code === 'IMAGE_PAYLOAD_TOO_LARGE'
+          ? 'imagePayloadTooLarge'
+          : 'imageUnsupported'
+    messageUtil.error(t(messageKey))
+  } finally {
+    imageProcessing.value = false
+  }
+}
+
+function removeImage() {
+  selectedImage.value = null
 }
 
 async function applyQuickAction(actionKey: keyof typeof buildInPrompt) {
@@ -909,7 +1009,11 @@ const formatEvidenceMessage = (requiredToolNames: TaskToolName[], evidence: Tool
   }
 }
 
-async function processChat(userMessage: HumanMessage, systemMessage?: string) {
+async function processChat(
+  userMessage: HumanMessage,
+  systemMessage?: string,
+  image?: ImageAttachment | null,
+): Promise<boolean> {
   const settings = settingForm.value
   const { replyLanguage: lang, api: provider } = settings
 
@@ -917,7 +1021,12 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
 
   if (isAgentMode && agentCapabilityBlocked.value) {
     messageUtil.error(t('modelDoesNotSupportTools'))
-    return
+    return false
+  }
+
+  if (image && isAgentMode) {
+    messageUtil.error(t('imageAgentUnsupported'))
+    return false
   }
 
   const baseSystemMessage =
@@ -932,11 +1041,15 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
 
   const defaultSystemMessage = new SystemMessage(finalSystemMessage)
 
-  // Add user message to history
-  history.value.push(userMessage)
+  // Keep image data out of history/checkpoints; it is attached only to this request.
+  const historyMessage = sanitizeHistoryMessage(userMessage)
+  history.value.push(historyMessage)
 
   // Prepare messages for LLM (always include system message first, followed by all history)
-  const finalMessages = [defaultSystemMessage, ...history.value]
+  const requestUserMessage = image
+    ? buildEphemeralMultimodalMessage(getMessageText(historyMessage), image.dataUrl)
+    : historyMessage
+  const finalMessages = [defaultSystemMessage, ...history.value.slice(0, -1), requestUserMessage]
   // Build provider configuration
   const providerConfigs: Record<string, any> = {
     official: {
@@ -990,7 +1103,7 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
   const currentConfig = providerConfigs[provider]
   if (!currentConfig) {
     messageUtil.error(t('notSupportedProvider'))
-    return
+    return false
   }
 
   const taskText = getMessageText(userMessage)
@@ -1007,7 +1120,7 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
     messageUtil.error(t('CONTEXT_TOO_LARGE'))
     errorIssue.value = null
     await scrollToBottom()
-    return
+    return false
   }
 
   // Use agent mode with tools if enabled
@@ -1076,10 +1189,11 @@ async function processChat(userMessage: HumanMessage, systemMessage?: string) {
       messageUtil.error(t('somethingWentWrong'))
     }
     errorIssue.value = null
-    return
+    return false
   }
 
   scrollToBottom()
+  return true
 }
 
 async function insertToDocument(content: string, type: insertTypes) {
@@ -1196,6 +1310,7 @@ const requestSensitiveDataApproval = async (scope: string) =>
   requestPaneConfirmation(t('documentDataApprovalTitle'), t('documentDataConfirm', { scope }))
 
 onBeforeUnmount(() => {
+  selectedImage.value = null
   resolvePendingConfirmation(false)
   cancelPendingPatchSet()
 })
