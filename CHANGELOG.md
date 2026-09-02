@@ -1,3 +1,9 @@
+## 2.10.0
+
+* Add Ask-mode TXT and Markdown text-file attachments with bounded size, count, and combined character limits.
+* Keep text-file contents ephemeral, preserve attachment order, and retain files after failed or cancelled requests.
+* Mark attached text as untrusted reference data and keep it out of chat history and checkpoints.
+
 ## 2.9.0
 
 * Add a bounded multi-image Ask attachment tray for local files and selected Word images.

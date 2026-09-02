@@ -7,6 +7,7 @@ import {
   estimateMessageChars,
   exceedsContextBudget,
 } from '../src/utils/conversationBudget.ts'
+import { buildTextFileRequestText, type TextFileAttachment } from '../src/utils/textFileInput.ts'
 
 assert.equal(estimateMessageChars([new HumanMessage('hello'), new AIMessage('world')]), 10)
 assert.equal(exceedsContextBudget([new HumanMessage('hello')], 5), false)
@@ -25,5 +26,17 @@ assert.equal(
   ]),
   9,
 )
+
+const textAttachment: TextFileAttachment = {
+  id: 'text-1',
+  name: 'notes.txt',
+  mimeType: 'text/plain',
+  size: 12,
+  charCount: 12,
+  text: 'attached text',
+}
+const textRequest = buildTextFileRequestText('summarize', [textAttachment])
+assert.equal(estimateMessageChars([new HumanMessage(textRequest)]), textRequest.length)
+assert.equal(estimateMessageChars([new HumanMessage('summarize')]), 'summarize'.length)
 
 console.log('conversation budget tests: PASS')
