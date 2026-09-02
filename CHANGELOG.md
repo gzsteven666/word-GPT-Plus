@@ -1,3 +1,8 @@
+## 2.12.0
+
+* Allow Ask-mode image-only sends with a localized default prompt.
+* Keep empty text-only sends disabled and preserve existing image validation and attachment cleanup.
+
 ## 2.11.1
 
 * Prevent image clipboard paste from inserting the image file name into the Ask input.
