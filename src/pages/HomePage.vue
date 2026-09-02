@@ -470,6 +470,7 @@ import {
   MAX_IMAGE_ATTACHMENTS,
   prepareImageAttachment,
   prepareImageAttachmentFromDataUrl,
+  preventClipboardImageTextInsertion,
   sanitizeHistoryMessage,
 } from '@/utils/imageInput'
 import { message as messageUtil } from '@/utils/message'
@@ -997,6 +998,7 @@ async function selectImage(event: Event) {
 async function handlePaste(event: ClipboardEvent) {
   const files = getClipboardImageFiles(event.clipboardData)
   if (!files.length) return
+  preventClipboardImageTextInsertion(event, files)
   if (mode.value === 'agent') {
     messageUtil.error(t('imageAgentUnsupported'))
     return

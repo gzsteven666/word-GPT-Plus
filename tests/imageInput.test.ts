@@ -16,6 +16,7 @@ import {
   MAX_IMAGE_BYTES,
   MAX_IMAGE_DIMENSION,
   MAX_IMAGE_TOTAL_PAYLOAD_BYTES,
+  preventClipboardImageTextInsertion,
   sanitizeHistoryMessage,
 } from '../src/utils/imageInput.ts'
 
@@ -53,6 +54,27 @@ assert.deepEqual(
   [],
 )
 assert.deepEqual(getClipboardImageFiles(null), [])
+let clipboardDefaultPrevented = false
+preventClipboardImageTextInsertion(
+  {
+    preventDefault: () => {
+      clipboardDefaultPrevented = true
+    },
+  },
+  [clipboardPng],
+)
+assert.equal(clipboardDefaultPrevented, true)
+
+clipboardDefaultPrevented = false
+preventClipboardImageTextInsertion(
+  {
+    preventDefault: () => {
+      clipboardDefaultPrevented = true
+    },
+  },
+  [],
+)
+assert.equal(clipboardDefaultPrevented, false)
 assert.ok(MAX_IMAGE_DIMENSION > 0)
 assert.deepEqual(constrainImageDimensions(8000, 4000), { width: MAX_IMAGE_DIMENSION, height: 800 })
 assert.deepEqual(constrainImageDimensions(800, 400), { width: 800, height: 400 })

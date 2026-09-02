@@ -73,6 +73,14 @@ export const getClipboardImageFiles = (clipboardData: DataTransfer | null): File
   return files.filter(file => SUPPORTED_IMAGE_TYPES.includes(file.type as (typeof SUPPORTED_IMAGE_TYPES)[number]))
 }
 
+/** Prevent browsers from inserting a clipboard image's file name into the text input. */
+export const preventClipboardImageTextInsertion = (
+  event: Pick<ClipboardEvent, 'preventDefault'>,
+  files: readonly File[],
+): void => {
+  if (files.length > 0) event.preventDefault()
+}
+
 export const getImageCapabilityGate = (capability: 'yes' | 'no' | 'unknown'): ImageCapabilityGate => {
   if (capability === 'yes') return 'allowed'
   if (capability === 'no') return 'blocked'

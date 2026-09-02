@@ -1,3 +1,8 @@
+## 2.11.1
+
+* Prevent image clipboard paste from inserting the image file name into the Ask input.
+* Preserve normal text-only paste behavior.
+
 ## 2.11.0
 
 * Add Ask-mode clipboard image paste for PNG, JPEG, and WebP images.
