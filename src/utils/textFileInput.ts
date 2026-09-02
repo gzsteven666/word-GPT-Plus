@@ -27,7 +27,7 @@ export class TextFileInputError extends Error {
 export interface TextFileAttachment {
   id: string
   name: string
-  mimeType: 'text/plain' | 'text/markdown' | 'text/x-markdown' | 'application/pdf'
+  mimeType: 'text/plain' | 'text/markdown' | 'text/x-markdown'
   size: number
   charCount: number
   text: string

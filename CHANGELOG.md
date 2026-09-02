@@ -1,9 +1,3 @@
-## 2.11.0
-
-* Add Ask-mode PDF text attachments with bounded file size, page count, and shared character limits.
-* Reuse the existing ephemeral text-attachment pipeline and reject unreadable, empty, malformed, or oversized PDFs.
-* Keep PDF contents out of chat history and checkpoints, and preserve attachments after failed or cancelled requests.
-
 ## 2.10.0
 
 * Add Ask-mode TXT and Markdown text-file attachments with bounded size, count, and combined character limits.

@@ -317,18 +317,18 @@
               tabindex="-1"
               class="flex items-center gap-1 border-none bg-transparent p-0 text-[10px] text-secondary hover:text-accent disabled:opacity-60"
               :disabled="imageProcessing || loading || mode === 'agent'"
-              :title="mode === 'agent' ? $t('textFileAgentUnsupported') : $t('attachFile')"
+              :title="mode === 'agent' ? $t('textFileAgentUnsupported') : $t('attachTextFile')"
             >
               <FileText :size="13" />
-              <span>{{ $t('attachFile') }}</span>
+              <span>{{ $t('attachTextFile') }}</span>
             </button>
             <input
               ref="textFileInput"
               class="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
               type="file"
               multiple
-              accept=".txt,.md,.pdf,text/plain,text/markdown,text/x-markdown,application/pdf"
-              :aria-label="$t('attachFile')"
+              accept=".txt,.md,text/plain,text/markdown,text/x-markdown"
+              :aria-label="$t('attachTextFile')"
               :disabled="imageProcessing || loading || mode === 'agent'"
               @change="selectTextFile"
             />
@@ -472,7 +472,6 @@ import {
 } from '@/utils/imageInput'
 import { message as messageUtil } from '@/utils/message'
 import { stripToolActivity } from '@/utils/messageText'
-import { PdfInputError, preparePdfAttachment } from '@/utils/pdfInput'
 import {
   createProviderModel,
   getResolvedCapability,
@@ -1048,17 +1047,10 @@ async function selectTextFile(event: Event) {
   imageProcessing.value = true
   try {
     const incoming: TextFileAttachment[] = []
-    for (const file of files) {
-      incoming.push(
-        file.name.toLowerCase().endsWith('.pdf')
-          ? await preparePdfAttachment(file)
-          : await prepareTextFileAttachment(file),
-      )
-    }
+    for (const file of files) incoming.push(await prepareTextFileAttachment(file))
     selectedTextFiles.value = appendTextFileAttachments(selectedTextFiles.value, incoming)
   } catch (error) {
-    const code =
-      error instanceof TextFileInputError || error instanceof PdfInputError ? error.code : 'TEXT_FILE_TYPE_UNSUPPORTED'
+    const code = error instanceof TextFileInputError ? error.code : 'TEXT_FILE_TYPE_UNSUPPORTED'
     messageUtil.error(t(getTextFileInputMessageKey(code)))
   } finally {
     imageProcessing.value = false
@@ -1079,10 +1071,6 @@ function getTextFileInputMessageKey(code: string) {
   if (code === 'TEXT_FILE_BINARY') return 'textFileBinary'
   if (code === 'TEXT_FILE_COUNT_EXCEEDED') return 'textFileCountExceeded'
   if (code === 'TEXT_FILE_TOTAL_CHARS_TOO_LARGE') return 'textFileTotalTooLarge'
-  if (code === 'PDF_TOO_LARGE') return 'pdfTooLarge'
-  if (code === 'PDF_PAGE_COUNT_EXCEEDED') return 'pdfPageCountExceeded'
-  if (code === 'PDF_EMPTY') return 'pdfEmpty'
-  if (code === 'PDF_PARSE_FAILED') return 'pdfParseFailed'
   return 'textFileUnsupported'
 }
 
