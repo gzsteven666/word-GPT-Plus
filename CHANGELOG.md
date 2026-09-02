@@ -1,3 +1,8 @@
+## 2.12.1
+
+* Require explicit user text before sending image attachments.
+* Keep image paste and attachment support without inventing a prompt.
+
 ## 2.12.0
 
 * Allow Ask-mode image-only sends with a localized default prompt.

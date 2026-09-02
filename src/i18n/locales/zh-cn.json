@@ -136,7 +136,6 @@
   "imageAgentUnsupported": "当前仅 Ask 模式支持图片",
   "imageCapabilityUnknown": "当前模型的视觉能力未知，请选择标记为支持视觉的模型",
   "imageCountExceeded": "最多同时附加 4 张图片",
-  "imageOnlyPrompt": "请描述这张图片",
   "imagePayloadTooLarge": "图片压缩后仍超过 4 MB，请选择更小的图片",
   "imageProcessing": "图片处理中…",
   "imageTooLarge": "图片过大（最大 10 MB）",

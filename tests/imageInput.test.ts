@@ -17,7 +17,6 @@ import {
   MAX_IMAGE_DIMENSION,
   MAX_IMAGE_TOTAL_PAYLOAD_BYTES,
   preventClipboardImageTextInsertion,
-  resolveImageSendText,
   sanitizeHistoryMessage,
 } from '../src/utils/imageInput.ts'
 
@@ -76,10 +75,6 @@ preventClipboardImageTextInsertion(
   [],
 )
 assert.equal(clipboardDefaultPrevented, false)
-
-assert.equal(resolveImageSendText('', true, 'analyze the attached image'), 'analyze the attached image')
-assert.equal(resolveImageSendText('  describe this  ', true, 'analyze the attached image'), 'describe this')
-assert.equal(resolveImageSendText('', false, 'analyze the attached image'), '')
 
 assert.ok(MAX_IMAGE_DIMENSION > 0)
 assert.deepEqual(constrainImageDimensions(8000, 4000), { width: MAX_IMAGE_DIMENSION, height: 800 })

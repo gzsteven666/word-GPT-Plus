@@ -81,12 +81,6 @@ export const preventClipboardImageTextInsertion = (
   if (files.length > 0) event.preventDefault()
 }
 
-/** Keep image-only Ask requests actionable while preserving blank text-only submits. */
-export const resolveImageSendText = (text: string, hasImages: boolean, imageOnlyPrompt: string): string => {
-  const trimmed = text.trim()
-  return trimmed || (hasImages ? imageOnlyPrompt.trim() : '')
-}
-
 export const getImageCapabilityGate = (capability: 'yes' | 'no' | 'unknown'): ImageCapabilityGate => {
   if (capability === 'yes') return 'allowed'
   if (capability === 'no') return 'blocked'

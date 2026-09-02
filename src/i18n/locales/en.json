@@ -134,7 +134,6 @@
   "imageAgentUnsupported": "Images are currently supported in Ask mode only",
   "imageCapabilityUnknown": "The model's vision capability is unknown; choose a model marked as Vision",
   "imageCountExceeded": "You can attach up to 4 images",
-  "imageOnlyPrompt": "Please describe the attached image",
   "imagePayloadTooLarge": "The processed image is still larger than 4 MB. Choose a smaller image.",
   "imageProcessing": "Processing image…",
   "imageTooLarge": "Image is too large (maximum 10 MB)",

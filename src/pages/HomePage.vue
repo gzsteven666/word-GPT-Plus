@@ -273,7 +273,7 @@
             v-else
             class="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-sm border-none bg-accent text-white disabled:cursor-not-allowed disabled:bg-accent/50"
             title="Send"
-            :disabled="(!userInput.trim() && !selectedImages.length) || imageProcessing"
+            :disabled="!userInput.trim() || imageProcessing"
             @click="sendMessage"
           >
             <Send :size="18" />
@@ -471,7 +471,6 @@ import {
   prepareImageAttachment,
   prepareImageAttachmentFromDataUrl,
   preventClipboardImageTextInsertion,
-  resolveImageSendText,
   sanitizeHistoryMessage,
 } from '@/utils/imageInput'
 import { message as messageUtil } from '@/utils/message'
@@ -903,12 +902,10 @@ async function scrollToBottom() {
 }
 
 async function sendMessage() {
-  const imagesForRequest = [...selectedImages.value]
-  const userMessage = resolveImageSendText(userInput.value, imagesForRequest.length > 0, t('imageOnlyPrompt'))
-  if (!userMessage || loading.value || imageProcessing.value) return
+  if (!userInput.value.trim() || loading.value || imageProcessing.value) return
   if (!checkApiKey()) return
 
-  if (imagesForRequest.length) {
+  if (selectedImages.value.length) {
     if (mode.value === 'agent') {
       messageUtil.error(t('imageAgentUnsupported'))
       return
@@ -930,6 +927,8 @@ async function sendMessage() {
     return
   }
 
+  const userMessage = userInput.value.trim()
+  const imagesForRequest = [...selectedImages.value]
   const textFilesForRequest = [...selectedTextFiles.value]
   userInput.value = ''
   adjustTextareaHeight()
