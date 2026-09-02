@@ -1,3 +1,8 @@
+## 2.11.0
+
+* Add Ask-mode clipboard image paste for PNG, JPEG, and WebP images.
+* Reuse existing image limits and ephemeral attachment handling without adding file parsing or persistence.
+
 ## 2.10.0
 
 * Add Ask-mode TXT and Markdown text-file attachments with bounded size, count, and combined character limits.

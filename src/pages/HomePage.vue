@@ -223,6 +223,7 @@
             rows="1"
             @keydown.enter.exact.prevent="sendMessage"
             @input="adjustTextareaHeight"
+            @paste="handlePaste"
           />
           <div v-if="selectedImages.length" class="flex min-w-0 shrink items-center gap-1 overflow-x-auto">
             <div
@@ -462,6 +463,7 @@ import {
   appendImageAttachments,
   buildEphemeralMultimodalMessage,
   clearSentImageAttachments,
+  getClipboardImageFiles,
   getImageCapabilityGate,
   type ImageAttachment,
   ImageInputError,
@@ -974,6 +976,32 @@ async function selectImage(event: Event) {
   const files = Array.from(input.files || [])
   input.value = ''
   if (!files.length) return
+
+  imageProcessing.value = true
+  try {
+    if (selectedImages.value.length + files.length > MAX_IMAGE_ATTACHMENTS) {
+      throw new ImageInputError('IMAGE_COUNT_EXCEEDED')
+    }
+    const incoming: ImageAttachment[] = []
+    for (const file of files) incoming.push(await prepareImageAttachment(file))
+    selectedImages.value = appendImageAttachments(selectedImages.value, incoming)
+  } catch (error) {
+    const code =
+      error instanceof ImageInputError ? error.code : error instanceof Error ? error.message : 'IMAGE_TYPE_UNSUPPORTED'
+    messageUtil.error(t(getImageInputMessageKey(code)))
+  } finally {
+    imageProcessing.value = false
+  }
+}
+
+async function handlePaste(event: ClipboardEvent) {
+  const files = getClipboardImageFiles(event.clipboardData)
+  if (!files.length) return
+  if (mode.value === 'agent') {
+    messageUtil.error(t('imageAgentUnsupported'))
+    return
+  }
+  if (loading.value || imageProcessing.value) return
 
   imageProcessing.value = true
   try {

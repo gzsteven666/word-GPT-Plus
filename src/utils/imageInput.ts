@@ -61,6 +61,18 @@ const textFromContent = (content: unknown): string => {
 export const isSupportedImageFile = (file: File): boolean =>
   SUPPORTED_IMAGE_TYPES.includes(file.type as (typeof SUPPORTED_IMAGE_TYPES)[number]) && file.size <= MAX_IMAGE_BYTES
 
+/** Extract image files from a clipboard without changing the browser's text-paste behavior. */
+export const getClipboardImageFiles = (clipboardData: DataTransfer | null): File[] => {
+  if (!clipboardData) return []
+
+  const itemFiles = Array.from(clipboardData.items || [])
+    .filter(item => item.kind === 'file')
+    .map(item => item.getAsFile())
+    .filter((file): file is File => Boolean(file))
+  const files = itemFiles.length ? itemFiles : Array.from(clipboardData.files || [])
+  return files.filter(file => SUPPORTED_IMAGE_TYPES.includes(file.type as (typeof SUPPORTED_IMAGE_TYPES)[number]))
+}
+
 export const getImageCapabilityGate = (capability: 'yes' | 'no' | 'unknown'): ImageCapabilityGate => {
   if (capability === 'yes') return 'allowed'
   if (capability === 'no') return 'blocked'

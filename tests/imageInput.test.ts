@@ -7,6 +7,7 @@ import {
   buildEphemeralMultimodalMessage,
   clearSentImageAttachments,
   constrainImageDimensions,
+  getClipboardImageFiles,
   getImageCapabilityGate,
   type ImageAttachment,
   ImageInputError,
@@ -25,6 +26,33 @@ assert.equal(isSupportedImageFile(file('image/jpeg')), true)
 assert.equal(isSupportedImageFile(file('image/webp')), true)
 assert.equal(isSupportedImageFile(file('image/gif')), false)
 assert.equal(isSupportedImageFile(file('image/png', MAX_IMAGE_BYTES + 1)), false)
+
+const clipboardItem = (itemFile: File | null, kind = 'file', type = itemFile?.type || 'image/png') =>
+  ({ kind, type, getAsFile: () => itemFile }) as unknown as DataTransferItem
+const clipboardPng = file('image/png')
+const clipboardJpeg = file('image/jpeg')
+assert.deepEqual(
+  getClipboardImageFiles({
+    items: [clipboardItem(clipboardPng)],
+    files: [],
+  } as unknown as DataTransfer),
+  [clipboardPng],
+)
+assert.deepEqual(
+  getClipboardImageFiles({
+    items: [clipboardItem(null, 'string', 'text/plain')],
+    files: [clipboardJpeg],
+  } as unknown as DataTransfer),
+  [clipboardJpeg],
+)
+assert.deepEqual(
+  getClipboardImageFiles({
+    items: [clipboardItem(file('image/gif'))],
+    files: [],
+  } as unknown as DataTransfer),
+  [],
+)
+assert.deepEqual(getClipboardImageFiles(null), [])
 assert.ok(MAX_IMAGE_DIMENSION > 0)
 assert.deepEqual(constrainImageDimensions(8000, 4000), { width: MAX_IMAGE_DIMENSION, height: 800 })
 assert.deepEqual(constrainImageDimensions(800, 400), { width: 800, height: 400 })
