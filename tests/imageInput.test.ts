@@ -3,12 +3,18 @@ import assert from 'node:assert/strict'
 import { HumanMessage } from '@langchain/core/messages'
 
 import {
+  appendImageAttachments,
   buildEphemeralMultimodalMessage,
+  clearSentImageAttachments,
   constrainImageDimensions,
   getImageCapabilityGate,
+  type ImageAttachment,
+  ImageInputError,
   isSupportedImageFile,
+  MAX_IMAGE_ATTACHMENTS,
   MAX_IMAGE_BYTES,
   MAX_IMAGE_DIMENSION,
+  MAX_IMAGE_TOTAL_PAYLOAD_BYTES,
   sanitizeHistoryMessage,
 } from '../src/utils/imageInput.ts'
 
@@ -27,11 +33,24 @@ assert.equal(getImageCapabilityGate('yes'), 'allowed')
 assert.equal(getImageCapabilityGate('no'), 'blocked')
 assert.equal(getImageCapabilityGate('unknown'), 'unknown')
 
-const ephemeral = buildEphemeralMultimodalMessage('describe this', 'data:image/png;base64,abc')
+const attachment = (id: string, size: number, name = `${id}.png`): ImageAttachment => ({
+  id,
+  name,
+  mimeType: 'image/png',
+  size,
+  width: 1,
+  height: 1,
+  dataUrl: `data:image/png;base64,${id}`,
+})
+
+const first = attachment('first', 100)
+const second = attachment('second', 200)
+const ephemeral = buildEphemeralMultimodalMessage('describe this', [first.dataUrl, second.dataUrl])
 assert.ok(ephemeral instanceof HumanMessage)
 assert.deepEqual(ephemeral.content, [
   { type: 'text', text: 'describe this' },
-  { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+  { type: 'image_url', image_url: { url: first.dataUrl } },
+  { type: 'image_url', image_url: { url: second.dataUrl } },
 ])
 
 const historyMessage = sanitizeHistoryMessage(ephemeral)
@@ -39,5 +58,27 @@ assert.equal(historyMessage instanceof HumanMessage, true)
 assert.equal(historyMessage.content, 'describe this')
 assert.equal(JSON.stringify(historyMessage).includes('data:image'), false)
 assert.equal(JSON.stringify(sanitizeHistoryMessage(new HumanMessage('plain'))).includes('data:image'), false)
+
+const existing = [first]
+const appended = appendImageAttachments(existing, [second])
+assert.deepEqual(appended, [first, second])
+assert.deepEqual(existing, [first])
+
+assert.throws(
+  () =>
+    appendImageAttachments(
+      Array.from({ length: MAX_IMAGE_ATTACHMENTS }, (_, index) => attachment(`item-${index}`, 1)),
+      [second],
+    ),
+  (error: unknown) => error instanceof ImageInputError && error.code === 'IMAGE_COUNT_EXCEEDED',
+)
+assert.throws(
+  () => appendImageAttachments([attachment('large', MAX_IMAGE_TOTAL_PAYLOAD_BYTES)], [second]),
+  (error: unknown) => error instanceof ImageInputError && error.code === 'IMAGE_TOTAL_PAYLOAD_TOO_LARGE',
+)
+
+const sent = [first, second]
+assert.deepEqual(clearSentImageAttachments(sent, sent, false), sent)
+assert.deepEqual(clearSentImageAttachments(sent, [first], true), [second])
 
 console.log('image input tests: PASS')

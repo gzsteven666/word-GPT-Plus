@@ -1,3 +1,9 @@
+## 2.9.0
+
+* Add a bounded multi-image Ask attachment tray for local files and selected Word images.
+* Preserve attachment order, enforce count and aggregate payload limits, and keep batch additions atomic.
+* Keep image payloads ephemeral, retain attachments on failed or cancelled requests, and clear them only after success.
+
 ## 2.8.0
 
 * Read exactly one selected inline Word image in Ask mode and send it through the existing single-image vision pipeline.

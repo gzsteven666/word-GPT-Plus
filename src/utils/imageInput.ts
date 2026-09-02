@@ -4,10 +4,32 @@ export const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'] a
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 export const MAX_IMAGE_DIMENSION = 1600
 export const MAX_IMAGE_PAYLOAD_BYTES = 4 * 1024 * 1024
+export const MAX_IMAGE_ATTACHMENTS = 4
+export const MAX_IMAGE_TOTAL_PAYLOAD_BYTES = 8 * 1024 * 1024
 
 export type ImageCapabilityGate = 'allowed' | 'blocked' | 'unknown'
 
+export type ImageInputErrorCode =
+  | 'IMAGE_TYPE_UNSUPPORTED'
+  | 'IMAGE_TOO_LARGE'
+  | 'IMAGE_PAYLOAD_TOO_LARGE'
+  | 'IMAGE_COUNT_EXCEEDED'
+  | 'IMAGE_TOTAL_PAYLOAD_TOO_LARGE'
+
+export class ImageInputError extends Error {
+  readonly code: ImageInputErrorCode
+  readonly fileName?: string
+
+  constructor(code: ImageInputErrorCode, fileName?: string) {
+    super(code)
+    this.name = 'ImageInputError'
+    this.code = code
+    this.fileName = fileName
+  }
+}
+
 export interface ImageAttachment {
+  id: string
   name: string
   mimeType: (typeof SUPPORTED_IMAGE_TYPES)[number]
   size: number
@@ -49,13 +71,37 @@ export const getImageCapabilityGate = (capability: 'yes' | 'no' | 'unknown'): Im
 export const sanitizeHistoryMessage = (message: Message): HumanMessage =>
   new HumanMessage(textFromContent(message.content))
 
-export const buildEphemeralMultimodalMessage = (text: string, dataUrl: string): HumanMessage =>
-  new HumanMessage({
+export const buildEphemeralMultimodalMessage = (text: string, dataUrls: string | readonly string[]): HumanMessage => {
+  const urls = typeof dataUrls === 'string' ? [dataUrls] : dataUrls
+  return new HumanMessage({
     content: [
       { type: 'text', text },
-      { type: 'image_url', image_url: { url: dataUrl } },
+      ...urls.map(dataUrl => ({ type: 'image_url' as const, image_url: { url: dataUrl } })),
     ],
   })
+}
+
+export const appendImageAttachments = (
+  existing: readonly ImageAttachment[],
+  incoming: readonly ImageAttachment[],
+): ImageAttachment[] => {
+  const combined = [...existing, ...incoming]
+  if (combined.length > MAX_IMAGE_ATTACHMENTS) throw new ImageInputError('IMAGE_COUNT_EXCEEDED')
+  if (combined.reduce((total, image) => total + image.size, 0) > MAX_IMAGE_TOTAL_PAYLOAD_BYTES) {
+    throw new ImageInputError('IMAGE_TOTAL_PAYLOAD_TOO_LARGE')
+  }
+  return combined
+}
+
+export const clearSentImageAttachments = (
+  current: readonly ImageAttachment[],
+  sent: readonly ImageAttachment[],
+  completed: boolean,
+): ImageAttachment[] => {
+  if (!completed) return [...current]
+  const sentIds = new Set(sent.map(image => image.id))
+  return current.filter(image => !sentIds.has(image.id))
+}
 
 const readAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -95,7 +141,7 @@ const prepareImageDataUrlAttachment = async (
   originalMimeType: string,
 ): Promise<ImageAttachment> => {
   if (!SUPPORTED_IMAGE_TYPES.includes(originalMimeType as (typeof SUPPORTED_IMAGE_TYPES)[number])) {
-    throw new Error('IMAGE_TYPE_UNSUPPORTED')
+    throw new ImageInputError('IMAGE_TYPE_UNSUPPORTED', name)
   }
   const image = await loadImage(originalDataUrl)
   let dataUrl = originalDataUrl
@@ -113,10 +159,13 @@ const prepareImageDataUrlAttachment = async (
       dataUrl = canvasDataUrl(image, mimeType, quality)
       quality -= 0.12
     } while (byteLengthOfDataUrl(dataUrl) > MAX_IMAGE_PAYLOAD_BYTES && quality >= 0.5)
-    if (byteLengthOfDataUrl(dataUrl) > MAX_IMAGE_PAYLOAD_BYTES) throw new Error('IMAGE_PAYLOAD_TOO_LARGE')
+    if (byteLengthOfDataUrl(dataUrl) > MAX_IMAGE_PAYLOAD_BYTES) {
+      throw new ImageInputError('IMAGE_PAYLOAD_TOO_LARGE', name)
+    }
   }
 
   return {
+    id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
     name,
     mimeType,
     size: byteLengthOfDataUrl(dataUrl),
@@ -128,9 +177,9 @@ const prepareImageDataUrlAttachment = async (
 
 export async function prepareImageAttachment(file: File): Promise<ImageAttachment> {
   if (!SUPPORTED_IMAGE_TYPES.includes(file.type as (typeof SUPPORTED_IMAGE_TYPES)[number])) {
-    throw new Error('IMAGE_TYPE_UNSUPPORTED')
+    throw new ImageInputError('IMAGE_TYPE_UNSUPPORTED', file.name)
   }
-  if (file.size > MAX_IMAGE_BYTES) throw new Error('IMAGE_TOO_LARGE')
+  if (file.size > MAX_IMAGE_BYTES) throw new ImageInputError('IMAGE_TOO_LARGE', file.name)
   return prepareImageDataUrlAttachment(file.name, await readAsDataUrl(file), file.type)
 }
 

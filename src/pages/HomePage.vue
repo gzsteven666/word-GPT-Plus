@@ -224,20 +224,23 @@
             @keydown.enter.exact.prevent="sendMessage"
             @input="adjustTextareaHeight"
           />
-          <div
-            v-if="selectedImage"
-            class="flex shrink-0 items-center gap-1 rounded border border-border-secondary bg-bg-secondary p-1"
-          >
-            <img :src="selectedImage.dataUrl" :alt="selectedImage.name" class="h-8 w-8 rounded object-cover" />
-            <span class="max-w-20 truncate text-[10px] text-secondary">{{ selectedImage.name }}</span>
-            <button
-              type="button"
-              class="flex h-5 w-5 items-center justify-center rounded border-none text-secondary hover:bg-danger/20 hover:text-danger"
-              :title="$t('removeImage')"
-              @click="removeImage"
+          <div v-if="selectedImages.length" class="flex min-w-0 shrink items-center gap-1 overflow-x-auto">
+            <div
+              v-for="image in selectedImages"
+              :key="image.id"
+              class="flex shrink-0 items-center gap-1 rounded border border-border-secondary bg-bg-secondary p-1"
             >
-              <X :size="12" />
-            </button>
+              <img :src="image.dataUrl" :alt="image.name" class="h-8 w-8 rounded object-cover" />
+              <span class="max-w-20 truncate text-[10px] text-secondary">{{ image.name }}</span>
+              <button
+                type="button"
+                class="flex h-5 w-5 items-center justify-center rounded border-none text-secondary hover:bg-danger/20 hover:text-danger"
+                :title="$t('removeImage')"
+                @click="removeImage(image.id)"
+              >
+                <X :size="12" />
+              </button>
+            </div>
           </div>
           <button
             v-if="loading"
@@ -273,6 +276,7 @@
               ref="imageInput"
               class="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
               type="file"
+              multiple
               accept="image/png,image/jpeg,image/webp"
               :aria-label="$t('attachImage')"
               :disabled="imageProcessing || loading || mode === 'agent'"
@@ -289,7 +293,16 @@
             <ImagePlus :size="13" />
             <span>{{ $t('attachWordImage') }}</span>
           </button>
-          <span v-if="selectedImage">{{ selectedImage.width }}×{{ selectedImage.height }}</span>
+          <span v-if="selectedImages.length">{{ selectedImages.length }}/{{ MAX_IMAGE_ATTACHMENTS }}</span>
+          <button
+            v-if="selectedImages.length > 1"
+            type="button"
+            class="border-none bg-transparent p-0 text-[10px] text-secondary hover:text-danger"
+            :title="$t('clearImages')"
+            @click="removeAllImages"
+          >
+            {{ $t('clearImages') }}
+          </button>
         </div>
         <div class="flex justify-center gap-3 px-1">
           <label class="flex h-3.5 w-3.5 flex-1 cursor-pointer items-center gap-1 text-xs text-secondary">
@@ -396,9 +409,13 @@ import { acceptPatchOperation, DocumentPatchSet, rejectPatchOperation } from '@/
 import { localStorageKey } from '@/utils/enum'
 import { createGeneralTools, GeneralToolName } from '@/utils/generalTools'
 import {
+  appendImageAttachments,
   buildEphemeralMultimodalMessage,
+  clearSentImageAttachments,
   getImageCapabilityGate,
   type ImageAttachment,
+  ImageInputError,
+  MAX_IMAGE_ATTACHMENTS,
   prepareImageAttachment,
   prepareImageAttachmentFromDataUrl,
   sanitizeHistoryMessage,
@@ -602,7 +619,7 @@ const mode = useStorage(localStorageKey.chatMode, 'ask' as 'ask' | 'agent')
 const history = ref<Message[]>([])
 const userInput = ref('')
 const imageInput = ref<HTMLInputElement>()
-const selectedImage = ref<ImageAttachment | null>(null)
+const selectedImages = ref<ImageAttachment[]>([])
 const imageProcessing = ref(false)
 const loading = ref(false)
 const messagesContainer = ref<HTMLElement>()
@@ -791,7 +808,7 @@ function startNewChat() {
   threadId.value = uuidv4()
   customSystemPrompt.value = ''
   selectedPromptId.value = ''
-  selectedImage.value = null
+  selectedImages.value = []
   resolvePendingConfirmation(false)
   adjustTextareaHeight()
 }
@@ -823,7 +840,7 @@ async function sendMessage() {
   if (!userInput.value.trim() || loading.value || imageProcessing.value) return
   if (!checkApiKey()) return
 
-  if (selectedImage.value) {
+  if (selectedImages.value.length) {
     if (mode.value === 'agent') {
       messageUtil.error(t('imageAgentUnsupported'))
       return
@@ -842,7 +859,7 @@ async function sendMessage() {
   }
 
   const userMessage = userInput.value.trim()
-  const imageForRequest = selectedImage.value
+  const imagesForRequest = [...selectedImages.value]
   userInput.value = ''
   adjustTextareaHeight()
 
@@ -869,7 +886,7 @@ async function sendMessage() {
   let completed = false
 
   try {
-    completed = await processChat(fullMessage, undefined, imageForRequest)
+    completed = await processChat(fullMessage, undefined, imagesForRequest)
   } catch (error: any) {
     if (error.name === 'AbortError') {
       messageUtil.info(t('generationStop'))
@@ -880,28 +897,28 @@ async function sendMessage() {
   } finally {
     loading.value = false
     abortController.value = null
-    if (completed && selectedImage.value === imageForRequest) selectedImage.value = null
+    selectedImages.value = clearSentImageAttachments(selectedImages.value, imagesForRequest, completed)
   }
 }
 
 async function selectImage(event: Event) {
   const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
+  const files = Array.from(input.files || [])
   input.value = ''
-  if (!file) return
+  if (!files.length) return
 
   imageProcessing.value = true
   try {
-    selectedImage.value = await prepareImageAttachment(file)
+    if (selectedImages.value.length + files.length > MAX_IMAGE_ATTACHMENTS) {
+      throw new ImageInputError('IMAGE_COUNT_EXCEEDED')
+    }
+    const incoming: ImageAttachment[] = []
+    for (const file of files) incoming.push(await prepareImageAttachment(file))
+    selectedImages.value = appendImageAttachments(selectedImages.value, incoming)
   } catch (error) {
-    const code = error instanceof Error ? error.message : 'IMAGE_TYPE_UNSUPPORTED'
-    const messageKey =
-      code === 'IMAGE_TOO_LARGE'
-        ? 'imageTooLarge'
-        : code === 'IMAGE_PAYLOAD_TOO_LARGE'
-          ? 'imagePayloadTooLarge'
-          : 'imageUnsupported'
-    messageUtil.error(t(messageKey))
+    const code =
+      error instanceof ImageInputError ? error.code : error instanceof Error ? error.message : 'IMAGE_TYPE_UNSUPPORTED'
+    messageUtil.error(t(getImageInputMessageKey(code)))
   } finally {
     imageProcessing.value = false
   }
@@ -917,8 +934,9 @@ async function selectWordImage() {
   try {
     const wordImage = await readSelectedInlineImage()
     const mimeType = /^data:(image\/(?:png|jpeg|webp));/i.exec(wordImage.dataUrl)?.[1]
-    if (!mimeType) throw new Error('IMAGE_TYPE_UNSUPPORTED')
-    selectedImage.value = await prepareImageAttachmentFromDataUrl('Word image', wordImage.dataUrl, mimeType)
+    if (!mimeType) throw new ImageInputError('IMAGE_TYPE_UNSUPPORTED', 'Word image')
+    const incoming = await prepareImageAttachmentFromDataUrl('Word image', wordImage.dataUrl, mimeType)
+    selectedImages.value = appendImageAttachments(selectedImages.value, [incoming])
   } catch (error) {
     if (error instanceof WordImageReadError) {
       const messageKey =
@@ -931,22 +949,34 @@ async function selectWordImage() {
               : 'wordImageReadFailed'
       messageUtil.error(t(messageKey))
     } else {
-      const code = error instanceof Error ? error.message : 'IMAGE_TYPE_UNSUPPORTED'
-      const messageKey =
-        code === 'IMAGE_PAYLOAD_TOO_LARGE'
-          ? 'imagePayloadTooLarge'
-          : code === 'IMAGE_TYPE_UNSUPPORTED'
-            ? 'imageUnsupported'
-            : 'wordImageReadFailed'
-      messageUtil.error(t(messageKey))
+      const code =
+        error instanceof ImageInputError
+          ? error.code
+          : error instanceof Error
+            ? error.message
+            : 'IMAGE_TYPE_UNSUPPORTED'
+      messageUtil.error(t(getImageInputMessageKey(code, 'wordImageReadFailed')))
     }
   } finally {
     imageProcessing.value = false
   }
 }
 
-function removeImage() {
-  selectedImage.value = null
+function removeImage(id: string) {
+  selectedImages.value = selectedImages.value.filter(image => image.id !== id)
+}
+
+function removeAllImages() {
+  selectedImages.value = []
+}
+
+function getImageInputMessageKey(code: string, fallback = 'imageUnsupported') {
+  if (code === 'IMAGE_COUNT_EXCEEDED') return 'imageCountExceeded'
+  if (code === 'IMAGE_TOTAL_PAYLOAD_TOO_LARGE') return 'imageTotalPayloadTooLarge'
+  if (code === 'IMAGE_TOO_LARGE') return 'imageTooLarge'
+  if (code === 'IMAGE_PAYLOAD_TOO_LARGE') return 'imagePayloadTooLarge'
+  if (code === 'IMAGE_TYPE_UNSUPPORTED') return 'imageUnsupported'
+  return fallback
 }
 
 async function applyQuickAction(actionKey: keyof typeof buildInPrompt) {
@@ -1062,7 +1092,7 @@ const formatEvidenceMessage = (requiredToolNames: TaskToolName[], evidence: Tool
 async function processChat(
   userMessage: HumanMessage,
   systemMessage?: string,
-  image?: ImageAttachment | null,
+  images: readonly ImageAttachment[] = [],
 ): Promise<boolean> {
   const settings = settingForm.value
   const { replyLanguage: lang, api: provider } = settings
@@ -1074,7 +1104,7 @@ async function processChat(
     return false
   }
 
-  if (image && isAgentMode) {
+  if (images.length && isAgentMode) {
     messageUtil.error(t('imageAgentUnsupported'))
     return false
   }
@@ -1096,8 +1126,11 @@ async function processChat(
   history.value.push(historyMessage)
 
   // Prepare messages for LLM (always include system message first, followed by all history)
-  const requestUserMessage = image
-    ? buildEphemeralMultimodalMessage(getMessageText(historyMessage), image.dataUrl)
+  const requestUserMessage = images.length
+    ? buildEphemeralMultimodalMessage(
+        getMessageText(historyMessage),
+        images.map(image => image.dataUrl),
+      )
     : historyMessage
   const finalMessages = [defaultSystemMessage, ...history.value.slice(0, -1), requestUserMessage]
   // Build provider configuration
@@ -1360,7 +1393,7 @@ const requestSensitiveDataApproval = async (scope: string) =>
   requestPaneConfirmation(t('documentDataApprovalTitle'), t('documentDataConfirm', { scope }))
 
 onBeforeUnmount(() => {
-  selectedImage.value = null
+  selectedImages.value = []
   resolvePendingConfirmation(false)
   cancelPendingPatchSet()
 })
